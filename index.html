@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Survival Arena - 生存竞技场</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- Login Screen -->
+  <div id="login-screen" class="screen">
+    <div class="menu-bg"></div>
+    <div class="login-content">
+      <h1 class="game-title">🔥 生存竞技场</h1>
+      <p class="subtitle">SURVIVAL ARENA</p>
+
+      <div class="login-tabs">
+        <button class="login-tab active" data-tab="login">登录</button>
+        <button class="login-tab" data-tab="register">注册</button>
+      </div>
+
+      <div class="login-form" id="login-form">
+        <!-- Input type toggle -->
+        <div class="input-type-toggle">
+          <button class="type-btn active" data-type="phone">📱 手机号</button>
+          <button class="type-btn" data-type="email">📧 邮箱</button>
+        </div>
+
+        <!-- Phone/Email input -->
+        <div class="form-group">
+          <input type="text" id="login-identifier" class="form-input" placeholder="请输入手机号" maxlength="11">
+          <span class="form-hint" id="identifier-hint"></span>
+        </div>
+
+        <!-- Verification code (phone only) -->
+        <div class="form-group" id="code-group">
+          <div class="code-row">
+            <input type="text" id="login-code" class="form-input code-input" placeholder="验证码" maxlength="6">
+            <button class="btn-send-code" id="btn-send-code">获取验证码</button>
+          </div>
+        </div>
+
+        <!-- Password -->
+        <div class="form-group">
+          <input type="password" id="login-password" class="form-input" placeholder="请输入密码">
+        </div>
+
+        <!-- Confirm password (register only) -->
+        <div class="form-group" id="confirm-group" style="display:none;">
+          <input type="password" id="login-confirm" class="form-input" placeholder="请确认密码">
+        </div>
+
+        <!-- Status message -->
+        <div class="form-status hidden" id="form-status"></div>
+
+        <!-- Submit button -->
+        <button class="btn btn-play" id="btn-login-submit">登录</button>
+
+        <p class="form-footer" id="form-footer">还没有账号？<span class="link" data-tab="register">立即注册</span></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Menu -->
+  <div id="main-menu" class="screen">
+    <div class="menu-bg"></div>
+    <div class="menu-content">
+      <h1 class="game-title">🔥 生存竞技场</h1>
+      <p class="subtitle">SURVIVAL ARENA</p>
+      <div class="menu-stats">
+        <span>🏆 最高分: <strong id="menu-high-score">0</strong></span>
+        <span>🪙 金币: <strong id="menu-coins">0</strong></span>
+        <span>💎 钻石: <strong id="menu-gems">0</strong></span>
+      </div>
+      <button class="btn btn-play" id="btn-play">⚔️ 开始战斗</button>
+      <button class="btn btn-shop" id="btn-shop-menu">🛒 升级商店</button>
+      <button class="btn btn-daily" id="btn-daily">🎁 每日奖励</button>
+      <button class="btn btn-skins" id="btn-skins">🎨 皮肤</button>
+      <div class="menu-user-info">
+        <span id="menu-user-display"></span>
+        <button class="btn-logout" id="btn-logout" style="display:none;">🚪 退出登录</button>
+      </div>
+      <div class="menu-controls-hint">
+        <p>🖱️ 鼠标瞄准 | 🎯 左键射击</p>
+        <p>⌨️ WASD 移动 | 空格 闪避</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game Screen -->
+  <div id="game-screen" class="screen hidden">
+    <canvas id="game-canvas"></canvas>
+    <div id="game-hud">
+      <div class="hud-top">
+        <div class="hud-left">
+          <div class="hp-bar-container">
+            <div class="hp-bar" id="hp-bar"></div>
+            <span class="hp-text" id="hp-text">100/100</span>
+          </div>
+          <div class="shield-indicator hidden" id="shield-indicator">🛡️</div>
+          <div class="weapon-indicator" id="weapon-indicator">🔫 手枪</div>
+        </div>
+        <div class="hud-center">
+          <div class="wave-display" id="wave-display">第 1 波</div>
+          <div class="enemy-count" id="enemy-count">敌人: 0</div>
+        </div>
+        <div class="hud-right">
+          <div class="score-display">🏆 <span id="score-display">0</span></div>
+          <div class="coin-display">🪙 <span id="coin-display-hud">0</span></div>
+          <div class="gem-display">💎 <span id="gem-display-hud">0</span></div>
+        </div>
+      </div>
+      <div class="hud-bottom">
+        <div class="active-effects" id="active-effects"></div>
+        <div class="wave-progress-container">
+          <div class="wave-progress-bar" id="wave-progress"></div>
+        </div>
+      </div>
+    </div>
+    <div id="damage-numbers"></div>
+    <div class="boss-alert hidden" id="boss-alert">⚠️ BOSS来袭！ ⚠️</div>
+    <div class="wave-announce hidden" id="wave-announce"></div>
+  </div>
+
+  <!-- Pause Screen -->
+  <div id="pause-screen" class="screen overlay hidden">
+    <div class="overlay-content pause-content">
+      <h2>⏸️ 游戏暂停</h2>
+      <div class="pause-currency">
+        <span>🪙 <strong id="pause-coins">0</strong></span>
+        <span>💎 <strong id="pause-gems">0</strong></span>
+      </div>
+      <div class="pause-tabs">
+        <button class="pause-tab active" data-pause-tab="weapons">🔫 武器</button>
+        <button class="pause-tab" data-pause-tab="items">🎒 道具</button>
+        <button class="pause-tab" data-pause-tab="upgrades">⬆️ 升级</button>
+      </div>
+      <div class="pause-tab-content" id="pause-tab-content"></div>
+      <button class="btn btn-resume" id="btn-resume">▶️ 继续</button>
+      <button class="btn btn-quit" id="btn-quit">🚪 退出</button>
+    </div>
+  </div>
+
+  <!-- Death Screen -->
+  <div id="death-screen" class="screen overlay hidden">
+    <div class="overlay-content death-content">
+      <h2 class="death-title">💀 你阵亡了！</h2>
+      <div class="death-stats">
+        <p>🏆 得分: <strong id="death-score">0</strong></p>
+        <p>🌊 到达第 <strong id="death-wave">1</strong> 波</p>
+        <p>💀 击杀数: <strong id="death-kills">0</strong></p>
+        <p>🪙 获得金币: <strong id="death-coins">0</strong></p>
+      </div>
+      <div class="revive-options">
+        <p class="revive-prompt">想要复活吗？</p>
+        <button class="btn btn-revive-ad" id="btn-revive-ad">
+          📺 看广告复活 <span class="badge">免费</span>
+        </button>
+        <button class="btn btn-revive-token" id="btn-revive-token">
+          🎫 使用复活令牌 <span class="badge" id="revive-token-count">0个</span>
+        </button>
+        <button class="btn btn-revive-friend" id="btn-revive-friend">
+          👥 邀请好友复活 <span class="badge">+奖励</span>
+        </button>
+        <button class="btn btn-revive-gems" id="btn-revive-gems">
+          💎 花费 5 钻石复活
+        </button>
+      </div>
+      <button class="btn btn-death-quit" id="btn-death-quit">🏳️ 放弃</button>
+      <p class="small-hint" id="death-hint"></p>
+    </div>
+  </div>
+
+  <!-- Shop Screen -->
+  <div id="shop-screen" class="screen overlay hidden">
+    <div class="overlay-content shop-content">
+      <h2>🛒 升级商店</h2>
+      <div class="shop-currency">
+        <span>🪙 <strong id="shop-coins">0</strong></span>
+        <span>💎 <strong id="shop-gems">0</strong></span>
+      </div>
+      <div class="shop-items" id="shop-items"></div>
+      <div class="shop-premium">
+        <h3>💎 钻石商城</h3>
+        <div class="premium-items" id="premium-items"></div>
+        <h3>🪙 金币商城</h3>
+        <div class="coin-shop-items" id="coin-shop-items"></div>
+      </div>
+      <button class="btn btn-back" id="btn-shop-back">↩️ 返回</button>
+    </div>
+  </div>
+
+  <!-- Daily Reward Screen -->
+  <div id="daily-screen" class="screen overlay hidden">
+    <div class="overlay-content daily-content">
+      <h2>🎁 每日奖励</h2>
+      <div class="daily-grid" id="daily-grid"></div>
+      <button class="btn btn-claim" id="btn-claim-daily">🎁 领取奖励</button>
+      <button class="btn btn-back" id="btn-daily-back">↩️ 返回</button>
+    </div>
+  </div>
+
+  <!-- Skins Screen -->
+  <div id="skins-screen" class="screen overlay hidden">
+    <div class="overlay-content skins-content">
+      <h2>🎨 皮肤选择</h2>
+      <div class="skins-grid" id="skins-grid"></div>
+      <button class="btn btn-back" id="btn-skins-back">↩️ 返回</button>
+    </div>
+  </div>
+
+  <!-- Friend Revive Modal -->
+  <div id="friend-modal" class="screen overlay hidden">
+    <div class="overlay-content friend-content">
+      <h2>👥 邀请好友为你复活</h2>
+      <p>分享以下链接给好友，当好友点击链接并开始游戏后，你将获得复活！</p>
+      <div class="share-link-container">
+        <input type="text" id="share-link" readonly>
+        <button class="btn btn-copy" id="btn-copy-link">📋 复制链接</button>
+      </div>
+      <p class="friend-reward">🎁 好友也将获得 <strong>50 金币</strong> 奖励！</p>
+      <div class="share-buttons">
+        <button class="btn btn-share-wechat" id="btn-share-wechat">💬 微信分享</button>
+        <button class="btn btn-share-qq" id="btn-share-qq">🐧 QQ分享</button>
+      </div>
+      <button class="btn btn-back" id="btn-friend-back">↩️ 返回</button>
+    </div>
+  </div>
+
+  <!-- Ad Watching Modal -->
+  <div id="ad-modal" class="screen overlay hidden">
+    <div class="overlay-content ad-content">
+      <h2>📺 观看广告</h2>
+      <p>广告播放中...</p>
+      <div class="ad-timer-bar">
+        <div class="ad-timer-fill" id="ad-timer-fill"></div>
+      </div>
+      <p class="ad-timer-text" id="ad-timer-text">剩余 15 秒</p>
+      <p class="ad-sponsor">赞助商广告位</p>
+      <div class="ad-placeholder">
+        <p>🎮 你的广告在这里</p>
+        <p class="small">联系投放: ads@survival-arena.com</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="toast hidden"></div>
+
+</div>
+
+<script src="js/game.js"></script>
+</body>
+</html>

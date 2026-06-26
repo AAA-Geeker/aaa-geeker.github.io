@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Test results
+test-results/
+
+# Claude AI config
+.claude/
+
+# Lock files (regenerated on npm install)
+package-lock.json
+
+# OS files
+.DS_Store
+Thumbs.db
