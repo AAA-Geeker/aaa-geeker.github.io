@@ -1574,11 +1574,11 @@ const game = {
   },
 
   // --- Referral System ---
-  checkReferral() {
+  async checkReferral() {
     const params = new URLSearchParams(window.location.search);
     const refId = params.get('ref');
     if (refId && refId !== Storage.getPlayerId()) {
-      // Check if already claimed
+      // Check if already claimed (local + server dedup)
       const claimedRefs = Storage.get('claimedRefs', []);
       if (!claimedRefs.includes(refId)) {
         // Give bonus to new player
@@ -1586,17 +1586,34 @@ const game = {
         Storage.set('coins', this.coins);
         this.showToast('🎉 通过好友链接加入！获得 50 金币奖励！');
 
-        // Store that someone used this referral
-        // In a real app, this would be server-side
-        // For now, store locally that we claimed this ref
+        // Mark as claimed locally (prevents duplicate claims)
         claimedRefs.push(refId);
         Storage.set('claimedRefs', claimedRefs);
 
-        // The referrer's revive token would be handled server-side in production
-        // For local demo, we store a pending revive for the referrer
-        const pendingRevives = Storage.get('pendingRevives', []);
-        pendingRevives.push({ from: Storage.getPlayerId(), to: refId, time: Date.now() });
-        Storage.set('pendingRevives', pendingRevives);
+        // ✅ Write to Supabase so Player A can verify on THEIR device
+        try {
+          const myId = Storage.getPlayerId();
+          const { error } = await supabase
+            .from('pending_revives')
+            .insert({
+              from_player: myId,
+              to_player: refId,
+              time: Date.now()
+            });
+          if (error) {
+            console.warn('[Referral] Supabase write failed, using localStorage fallback:', error.message);
+            const pendingRevives = Storage.get('pendingRevives', []);
+            pendingRevives.push({ from: myId, to: refId, time: Date.now() });
+            Storage.set('pendingRevives', pendingRevives);
+          } else {
+            console.log('[Referral] ✅ Revive token sent to Supabase for player:', refId);
+          }
+        } catch (err) {
+          console.warn('[Referral] Supabase unreachable, using localStorage fallback:', err.message);
+          const pendingRevives = Storage.get('pendingRevives', []);
+          pendingRevives.push({ from: Storage.getPlayerId(), to: refId, time: Date.now() });
+          Storage.set('pendingRevives', pendingRevives);
+        }
       }
     }
   },
@@ -2183,16 +2200,34 @@ const game = {
     verifyStatusEl.querySelector('.verify-status-text').textContent = '正在检查好友是否已进入游戏...';
     verifyIconEl.textContent = '🔄';
 
-    // Simulate server verification with polling
+    // ✅ Real verification via Supabase with polling
     let checkCount = 0;
     const maxChecks = 5;
     const self = this;
 
-    const doCheck = function() {
+    const doCheck = async function() {
       checkCount++;
-      const pendingRevives = Storage.get('pendingRevives', []);
       const myId = Storage.getPlayerId();
-      const foundRevive = pendingRevives.find(function(r) { return r.to === myId; });
+      let foundRevive = null;
+
+      // Try Supabase first
+      try {
+        const { data, error } = await supabase
+          .from('pending_revives')
+          .select('*')
+          .eq('to_player', myId)
+          .order('time', { ascending: false })
+          .limit(1);
+
+        if (!error && data && data.length > 0) {
+          foundRevive = data[0];
+        }
+      } catch (err) {
+        console.warn('[Verify] Supabase query failed, trying localStorage:', err.message);
+        // Fallback to localStorage
+        const pendingRevives = Storage.get('pendingRevives', []);
+        foundRevive = pendingRevives.find(function(r) { return r.to === myId; });
+      }
 
       if (foundRevive) {
         // SUCCESS! Friend clicked the link
@@ -2214,16 +2249,25 @@ const game = {
         document.querySelector('.verify-step[data-step="2"]').classList.add('done');
         document.querySelector('.verify-step[data-step="2"]').classList.remove('active');
 
-        // Remove the used pending revive
-        const remaining = pendingRevives.filter(function(r) { return r.to !== myId; });
-        Storage.set('pendingRevives', remaining);
+        // Remove the used pending revive from Supabase
+        try {
+          await supabase
+            .from('pending_revives')
+            .delete()
+            .eq('to_player', myId);
+        } catch (e) {
+          // Clean up localStorage fallback too
+          const pendingRevives = Storage.get('pendingRevives', []);
+          const remaining = pendingRevives.filter(function(r) { return r.to !== myId; });
+          Storage.set('pendingRevives', remaining);
+        }
 
         Sound.powerup();
       } else if (checkCount < maxChecks) {
-        // Retry with delay (simulating server polling)
+        // Retry with delay (real server polling)
         verifyStatusEl.querySelector('.verify-status-text').textContent =
           '正在核验中... (' + checkCount + '/' + maxChecks + ')';
-        self._verificationPollTimer = setTimeout(doCheck, 800);
+        self._verificationPollTimer = setTimeout(doCheck, 1200);
       } else {
         // All checks failed
         btnVerify.disabled = false;
@@ -3536,20 +3580,48 @@ const canvas = document.getElementById('game-canvas');
 // --- Initialize ---
 game.init();
 
-// Check for pending revives (would be server-side in production)
-const pendingRevives = Storage.get('pendingRevives', []);
-if (pendingRevives.length > 0) {
-  // In production, check if any pending revive is for this player
-  // For demo, we just note it
+// ✅ Check for pending revives from Supabase (cross-device)
+(async function checkPendingRevives() {
   const myId = Storage.getPlayerId();
-  const myRevives = pendingRevives.filter(r => r.to === myId);
-  if (myRevives.length > 0 && game.reviveTokens <= 0) {
-    game.reviveTokens += myRevives.length;
-    Storage.set('reviveTokens', game.reviveTokens);
-    // Clear processed
-    Storage.set('pendingRevives', pendingRevives.filter(r => r.to !== myId));
+  let foundRevives = 0;
+
+  // Try Supabase first
+  try {
+    const { data, error } = await supabase
+      .from('pending_revives')
+      .select('*')
+      .eq('to_player', myId);
+
+    if (!error && data && data.length > 0) {
+      foundRevives = data.length;
+      // Clean up processed revives from Supabase
+      await supabase
+        .from('pending_revives')
+        .delete()
+        .eq('to_player', myId);
+      console.log('[Revive] ✅ Found ' + foundRevives + ' pending revive(s) in Supabase');
+    }
+  } catch (err) {
+    console.log('[Revive] Supabase not available for page-load check:', err.message);
   }
-}
+
+  // Fallback: check localStorage too (for offline or error cases)
+  const localRevives = Storage.get('pendingRevives', []);
+  if (localRevives.length > 0) {
+    const myLocalRevives = localRevives.filter(r => r.to === myId);
+    if (myLocalRevives.length > 0) {
+      foundRevives += myLocalRevives.length;
+      Storage.set('pendingRevives', localRevives.filter(r => r.to !== myId));
+    }
+  }
+
+  // Award revive tokens
+  if (foundRevives > 0 && game.reviveTokens <= 0) {
+    game.reviveTokens += foundRevives;
+    Storage.set('reviveTokens', game.reviveTokens);
+    console.log('[Revive] 🎫 Awarded ' + foundRevives + ' revive token(s)!');
+  }
+})();
 
 console.log('%c🎮 生存竞技场已就绪 %c| %cPlayer ID: ' + Storage.getPlayerId(),
   'font-size:16px;color:#e94560', '', 'color:#888');
