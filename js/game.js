@@ -1593,7 +1593,7 @@ const game = {
         // ✅ Write to Supabase so Player A can verify on THEIR device
         try {
           const myId = Storage.getPlayerId();
-          const { error } = await supabase
+          const { error } = await window.__supabase
             .from('pending_revives')
             .insert({
               from_player: myId,
@@ -2212,7 +2212,7 @@ const game = {
 
       // Try Supabase first
       try {
-        const { data, error } = await supabase
+        const { data, error } = await window.__supabase
           .from('pending_revives')
           .select('*')
           .eq('to_player', myId)
@@ -2251,7 +2251,7 @@ const game = {
 
         // Remove the used pending revive from Supabase
         try {
-          await supabase
+          await window.__supabase
             .from('pending_revives')
             .delete()
             .eq('to_player', myId);
@@ -3587,7 +3587,7 @@ game.init();
 
   // Try Supabase first
   try {
-    const { data, error } = await supabase
+    const { data, error } = await window.__supabase
       .from('pending_revives')
       .select('*')
       .eq('to_player', myId);
@@ -3595,7 +3595,7 @@ game.init();
     if (!error && data && data.length > 0) {
       foundRevives = data.length;
       // Clean up processed revives from Supabase
-      await supabase
+      await window.__supabase
         .from('pending_revives')
         .delete()
         .eq('to_player', myId);
