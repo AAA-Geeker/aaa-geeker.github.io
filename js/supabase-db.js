@@ -68,6 +68,28 @@ const SupabaseDB = {
     return data;
   },
 
+  // ---- 查询全部复活令牌（无条数限制，页面加载自动认领用） ----
+  async checkAllRevives(playerId) {
+    const url = this._base + '?to_player=eq.' + encodeURIComponent(playerId) + '&order=time.desc';
+
+    console.log('[DB] SELECT ALL → to_player=' + playerId);
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: this._headers(),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('[DB] SELECT ALL failed:', res.status, errText);
+      throw new Error('HTTP ' + res.status + ': ' + errText);
+    }
+
+    const data = await res.json();
+    console.log('[DB] ✅ SELECT ALL found', data.length, 'record(s)');
+    return data;
+  },
+
   // ---- 删除已使用的复活令牌 ----
   async deleteRevives(playerId) {
     const url = this._base + '?to_player=eq.' + encodeURIComponent(playerId);

@@ -1164,7 +1164,6 @@ const game = {
   wave: 0,
   score: 0,
   starsEarned: 0,   // in-run stars (reset each game)
-  _coinsAtStart: 0,   // coins balance at run start
   gems: 0,
   kills: 0,
   state: 'menu', // menu, playing, paused, dead
@@ -1352,7 +1351,6 @@ const game = {
     this.starsEarned = this._pendingStarBonus;
     this._pendingStarBonus = 0;
     Storage.set('pendingStarBonus', 0);
-    this._coinsAtStart = this.coins;
     this.kills = 0;
     this.state = 'playing';
     this.reviveUsed = false;
@@ -1538,6 +1536,11 @@ const game = {
   },
 
   revive() {
+    // Enforce MAX_REVIVES_PER_RUN — one revive per game session
+    if (this.reviveUsed) {
+      this.showToast('⚠️ 本局已复活过一次，无法再次复活');
+      return;
+    }
     this.player.alive = true;
     this.player.hp = this.player.maxHp;
     this.player.iframeTimer = 1500;
@@ -2231,14 +2234,18 @@ const game = {
         document.querySelector('.verify-step[data-step="2"]').classList.add('done');
         document.querySelector('.verify-step[data-step="2"]').classList.remove('active');
 
+        // Clean up localStorage fallback records (always, regardless of Supabase)
+        const pendingRevives = Storage.get('pendingRevives', []);
+        const remaining = pendingRevives.filter(function(r) { return r.to !== myId; });
+        if (remaining.length !== pendingRevives.length) {
+          Storage.set('pendingRevives', remaining);
+        }
+
         // Remove the used pending revive from Supabase
         try {
           await SupabaseDB.deleteRevives(myId);
         } catch (e) {
-          // Clean up localStorage fallback too
-          const pendingRevives = Storage.get('pendingRevives', []);
-          const remaining = pendingRevives.filter(function(r) { return r.to !== myId; });
-          Storage.set('pendingRevives', remaining);
+          console.warn('[Verify] Supabase delete failed:', e.message);
         }
 
         Sound.powerup();
@@ -3395,11 +3402,20 @@ const game = {
       document.getElementById('death-kills').textContent = `${this.kills} (最大连杀 ${this.maxCombo})`;
       document.getElementById('death-stars').textContent = this.starsEarned;
       document.getElementById('revive-token-count').textContent = this.reviveTokens + '个';
-      document.getElementById('btn-revive-ad').style.display = this.adWatched ? 'none' : 'block';
-      document.getElementById('btn-revive-token').style.display = this.reviveTokens > 0 ? 'block' : 'none';
-      document.getElementById('death-hint').textContent = this.reviveUsed
-        ? '本局已复活过一次，再次阵亡无法复活'
-        : '';
+      // If already revived this run, hide all revive options
+      if (this.reviveUsed) {
+        document.getElementById('btn-revive-ad').style.display = 'none';
+        document.getElementById('btn-revive-token').style.display = 'none';
+        document.getElementById('btn-revive-friend').style.display = 'none';
+        document.getElementById('btn-revive-gems').style.display = 'none';
+        document.getElementById('death-hint').textContent = '本局已复活过一次，再次阵亡无法复活';
+      } else {
+        document.getElementById('btn-revive-ad').style.display = this.adWatched ? 'none' : 'block';
+        document.getElementById('btn-revive-token').style.display = this.reviveTokens > 0 ? 'block' : 'none';
+        document.getElementById('btn-revive-friend').style.display = 'block';
+        document.getElementById('btn-revive-gems').style.display = 'block';
+        document.getElementById('death-hint').textContent = '';
+      }
 
       // "One more game" progression hook
       const deathProgEl = document.getElementById('death-progress');
@@ -3572,8 +3588,9 @@ game.init();
   let foundRevives = 0;
 
   // ✅ Check Supabase for pending revives
+  // ✅ Query Supabase for ALL pending revives (no limit, unlike checkRevives)
   try {
-    const data = await SupabaseDB.checkRevives(myId);
+    const data = await SupabaseDB.checkAllRevives(myId);
     if (data && data.length > 0) {
       foundRevives = data.length;
       await SupabaseDB.deleteRevives(myId);
