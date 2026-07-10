@@ -2080,7 +2080,9 @@ const game = {
     document.getElementById('verify-status').querySelector('.verify-status-text').textContent = '等待核验中...';
     document.getElementById('verify-icon').textContent = '🔍';
     document.getElementById('verify-result').classList.add('hidden');
-    document.getElementById('btn-revive-success').classList.add('hidden');
+    const reviveBtn = document.getElementById('btn-revive-success');
+    reviveBtn.disabled = true;
+    reviveBtn.textContent = '🔒 请先完成核验';
     document.getElementById('share-status').classList.remove('done');
     document.getElementById('share-status').querySelector('.status-icon').textContent = '⏳';
     document.getElementById('share-status').querySelector('.status-icon').nextSibling.textContent = ' 请完成分享后进入下一步';
@@ -2222,7 +2224,8 @@ const game = {
         verifyResultEl.classList.add('success');
         verifyResultEl.querySelector('.verify-result-icon').textContent = '🎊';
         verifyResultEl.querySelector('.verify-result-text').textContent = '核验成功！好友已确认，现在可以复活了！';
-        btnReviveSuccess.classList.remove('hidden');
+        btnReviveSuccess.disabled = false;
+        btnReviveSuccess.textContent = '🎉 确认复活！';
 
         // Mark step 2 as done
         document.querySelector('.verify-step[data-step="2"]').classList.add('done');
@@ -2258,7 +2261,8 @@ const game = {
         verifyResultEl.querySelector('.verify-result-icon').textContent = '⏳';
         verifyResultEl.querySelector('.verify-result-text').textContent =
           '未检测到好友点击。请让好友通过链接进入游戏后再试，或重新分享链接。';
-        btnReviveSuccess.classList.add('hidden');
+        btnReviveSuccess.disabled = true;
+        btnReviveSuccess.textContent = '🔒 请先完成核验';
 
         // Allow retry
         self._verifyChecked = false;
@@ -2279,6 +2283,12 @@ const game = {
 
   // Confirm revive from share verification
   confirmReviveFromShare() {
+    // Guard: must pass verification first
+    if (!this._verifyChecked) {
+      this.showToast('⚠️ 请先完成核验');
+      return;
+    }
+
     // Clear polling timer if active
     if (this._verificationPollTimer) {
       clearTimeout(this._verificationPollTimer);

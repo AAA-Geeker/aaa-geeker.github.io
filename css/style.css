@@ -926,6 +926,17 @@ body {
   transform: scale(1.05);
   box-shadow: 0 6px 25px rgba(233,69,96,0.5);
 }
+.btn-revive-success:disabled {
+  background: #555;
+  color: #999;
+  cursor: not-allowed;
+  animation: none;
+  box-shadow: none;
+}
+.btn-revive-success:disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
 
 /* Verify Rewards */
 .verify-rewards {
