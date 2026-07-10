@@ -21,15 +21,8 @@
 	  }
 	</script>
 
-	<!-- Supabase 实时数据库（好友复活验证） -->
-	<script src="js/supabase.min.js"></script>
-	<script>
-	  // Supabase 客户端初始化 — 挂载到 window 确保全局可访问
-	  const SUPABASE_URL = 'https://jafbdgiupihatjfebdvq.supabase.co';
-	  const SUPABASE_KEY = 'sb_publishable_HB7mHMXkvM6-I7ALRhMxXw_KAHAacNx';
-	  window.__supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-	  console.log('[Supabase] Client initialized, SDK version:', window.supabase.SupabaseClient ? 'OK' : 'UNKNOWN');
-	</script>
+	<!-- Supabase 实时数据库（好友复活验证）— 直接通过REST API -->
+	<script src="js/supabase-db.js"></script>
 
 	<!-- Monetag → AdManager adapter（必须在 game.js 之前加载） -->
 	<script src="js/ads-monetag.js"></script>

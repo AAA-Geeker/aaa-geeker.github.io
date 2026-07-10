@@ -1592,22 +1592,8 @@ const game = {
 
         // ✅ Write to Supabase so Player A can verify on THEIR device
         try {
-          const myId = Storage.getPlayerId();
-          const { error } = await window.__supabase
-            .from('pending_revives')
-            .insert({
-              from_player: myId,
-              to_player: refId,
-              time: Date.now()
-            });
-          if (error) {
-            console.warn('[Referral] Supabase write failed, using localStorage fallback:', error.message);
-            const pendingRevives = Storage.get('pendingRevives', []);
-            pendingRevives.push({ from: myId, to: refId, time: Date.now() });
-            Storage.set('pendingRevives', pendingRevives);
-          } else {
-            console.log('[Referral] ✅ Revive token sent to Supabase for player:', refId);
-          }
+          await SupabaseDB.addRevive(Storage.getPlayerId(), refId);
+          console.log('[Referral] ✅ Revive token sent to Supabase for player:', refId);
         } catch (err) {
           console.warn('[Referral] Supabase unreachable, using localStorage fallback:', err.message);
           const pendingRevives = Storage.get('pendingRevives', []);
@@ -2210,21 +2196,14 @@ const game = {
       const myId = Storage.getPlayerId();
       let foundRevive = null;
 
-      // Try Supabase first
+      // ✅ Query Supabase for pending revive
       try {
-        const { data, error } = await window.__supabase
-          .from('pending_revives')
-          .select('*')
-          .eq('to_player', myId)
-          .order('time', { ascending: false })
-          .limit(1);
-
-        if (!error && data && data.length > 0) {
+        const data = await SupabaseDB.checkRevives(myId);
+        if (data && data.length > 0) {
           foundRevive = data[0];
         }
       } catch (err) {
         console.warn('[Verify] Supabase query failed, trying localStorage:', err.message);
-        // Fallback to localStorage
         const pendingRevives = Storage.get('pendingRevives', []);
         foundRevive = pendingRevives.find(function(r) { return r.to === myId; });
       }
@@ -2251,10 +2230,7 @@ const game = {
 
         // Remove the used pending revive from Supabase
         try {
-          await window.__supabase
-            .from('pending_revives')
-            .delete()
-            .eq('to_player', myId);
+          await SupabaseDB.deleteRevives(myId);
         } catch (e) {
           // Clean up localStorage fallback too
           const pendingRevives = Storage.get('pendingRevives', []);
@@ -3585,20 +3561,12 @@ game.init();
   const myId = Storage.getPlayerId();
   let foundRevives = 0;
 
-  // Try Supabase first
+  // ✅ Check Supabase for pending revives
   try {
-    const { data, error } = await window.__supabase
-      .from('pending_revives')
-      .select('*')
-      .eq('to_player', myId);
-
-    if (!error && data && data.length > 0) {
+    const data = await SupabaseDB.checkRevives(myId);
+    if (data && data.length > 0) {
       foundRevives = data.length;
-      // Clean up processed revives from Supabase
-      await window.__supabase
-        .from('pending_revives')
-        .delete()
-        .eq('to_player', myId);
+      await SupabaseDB.deleteRevives(myId);
       console.log('[Revive] ✅ Found ' + foundRevives + ' pending revive(s) in Supabase');
     }
   } catch (err) {
