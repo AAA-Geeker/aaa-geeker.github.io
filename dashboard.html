@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎮 生存竞技场 — 数据分析面板</title>
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root {
+  --bg:#0a0a0f; --surface:#141420; --primary:#e94560;
+  --accent:#16c79a; --gold:#f0c040; --text:#e0e0e0; --text-dim:#888;
+}
+body{font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);padding:20px;min-height:100vh}
+h1{text-align:center;font-size:1.8rem;margin-bottom:4px;background:linear-gradient(135deg,var(--primary),var(--gold));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.subtitle{text-align:center;color:var(--text-dim);margin-bottom:6px;font-size:0.85rem}
+
+/* Time filter */
+.time-filter{display:flex;justify-content:center;gap:8px;margin-bottom:24px;flex-wrap:wrap}
+.time-btn{padding:8px 20px;border:1px solid rgba(255,255,255,0.12);border-radius:20px;background:transparent;color:var(--text-dim);cursor:pointer;font-size:0.82rem;transition:all 0.2s}
+.time-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.time-btn:hover:not(.active){border-color:rgba(255,255,255,0.3);color:var(--text)}
+
+/* KPI Cards */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:12px;margin-bottom:24px;max-width:1100px;margin-left:auto;margin-right:auto}
+.kpi-card{background:var(--surface);border-radius:14px;padding:16px 14px;text-align:center;border:1px solid rgba(255,255,255,0.06);transition:transform 0.2s}
+.kpi-card:hover{transform:translateY(-2px)}
+.kpi-card .kpi-icon{font-size:1.8rem;margin-bottom:4px}
+.kpi-card .kpi-value{font-size:1.8rem;font-weight:900;color:var(--gold)}
+.kpi-card .kpi-sub{font-size:0.7rem;color:var(--text-dim);margin-top:2px}
+.kpi-card .kpi-label{font-size:0.75rem;color:var(--text-dim);margin-top:4px}
+
+/* Section */
+.section{max-width:1100px;margin:0 auto 20px}
+.section h2{font-size:1.05rem;color:var(--accent);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.06)}
+.section .section-desc{font-size:0.75rem;color:var(--text-dim);margin-bottom:10px}
+
+/* Tables */
+.data-table{width:100%;border-collapse:collapse;font-size:0.85rem}
+.data-table th{background:rgba(255,255,255,0.04);padding:10px 12px;text-align:left;font-size:0.73rem;color:var(--text-dim);letter-spacing:0.5px}
+.data-table td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.04)}
+.data-table tr:hover{background:rgba(255,255,255,0.02)}
+.data-table .num{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+
+/* Bar charts */
+.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+.bar-label{min-width:110px;font-size:0.8rem;text-align:right}
+.bar-track{flex:1;height:26px;background:rgba(255,255,255,0.05);border-radius:6px;overflow:hidden;position:relative}
+.bar-fill{height:100%;background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:6px;transition:width 0.5s}
+.bar-val{position:absolute;top:50%;left:8px;transform:translateY(-50%);font-size:0.73rem;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,0.5)}
+
+/* Two-column layout */
+.cols-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:700px){.cols-2{grid-template-columns:1fr}}
+
+/* Loading / Error */
+.loading{text-align:center;padding:50px;color:var(--text-dim)}
+.spinner{display:inline-block;width:24px;height:24px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 0.6s linear infinite;margin-right:8px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error{text-align:center;padding:20px;color:var(--primary);background:rgba(233,69,96,0.1);border-radius:10px;line-height:1.8}
+.error button{margin-top:8px;padding:8px 20px;background:var(--primary);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:0.9rem}
+
+/* Footer */
+.footer{text-align:center;color:var(--text-dim);font-size:0.7rem;margin-top:30px;padding-bottom:20px}
+.footer a{color:var(--accent);text-decoration:none}
+.footer a:hover{text-decoration:underline}
+
+@media(max-width:600px){
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .kpi-value{font-size:1.3rem}
+  .bar-label{min-width:75px;font-size:0.7rem}
+}
+</style>
+</head>
+<body>
+
+<h1>🎮 生存竞技场 · 数据面板</h1>
+<p class="subtitle">实时游戏数据分析 · 用户行为追踪 · 变现漏斗监控</p>
+
+<!-- 时间筛选 -->
+<div class="time-filter" id="time-filter">
+  <button class="time-btn active" data-range="today">📅 今日</button>
+  <button class="time-btn" data-range="7d">📆 近7天</button>
+  <button class="time-btn" data-range="30d">📊 近30天</button>
+  <button class="time-btn" data-range="all">📈 全部</button>
+</div>
+
+<div id="app">
+  <div class="loading"><span class="spinner"></span>正在从 Supabase 加载数据...</div>
+</div>
+
+<script>
+// ============================================================
+// Supabase 配置（与游戏项目共用）
+// ============================================================
+var SUPABASE_URL = 'https://jafbdgiupihatjfebdvq.supabase.co';
+var SUPABASE_KEY = 'sb_publishable_HB7mHMXkvM6-I7ALRhMxXw_KAHAacNx';
+var TABLE = 'game_events';
+
+function apiHeaders() {
+  return {
+    'apikey': SUPABASE_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'Content-Type': 'application/json',
+  };
+}
+
+// ============================================================
+// 查询工具函数
+// ============================================================
+function timeFilter(range) {
+  var now = new Date();
+  if (range === 'today') {
+    return '&timestamp=gte.' + now.toISOString().split('T')[0] + 'T00:00:00Z';
+  }
+  if (range === '7d') {
+    var d = new Date(now - 7*86400000);
+    return '&timestamp=gte.' + d.toISOString().split('T')[0] + 'T00:00:00Z';
+  }
+  if (range === '30d') {
+    var d = new Date(now - 30*86400000);
+    return '&timestamp=gte.' + d.toISOString().split('T')[0] + 'T00:00:00Z';
+  }
+  return '';
+}
+
+async function queryCount(filter) {
+  filter = filter || '';
+  var base = SUPABASE_URL + '/rest/v1/' + TABLE;
+  var url = base + '?select=id' + filter + '&limit=1';
+  var res = await fetch(url, { headers: Object.assign({}, apiHeaders(), { 'Prefer': 'count=exact' }) });
+  if (!res.ok) return 0;
+  var range = res.headers.get('content-range');
+  if (range) { var parts = range.split('/'); return parseInt(parts[1]) || 0; }
+  return 0;
+}
+
+async function queryAll(select, filter, order, limit) {
+  select = select || '*';
+  filter = filter || '';
+  order = order || '';
+  limit = limit || 100;
+  var base = SUPABASE_URL + '/rest/v1/' + TABLE;
+  var url = base + '?select=' + encodeURIComponent(select);
+  if (filter) url += '&' + filter;
+  if (order) url += '&order=' + encodeURIComponent(order);
+  if (limit) url += '&limit=' + limit;
+  var res = await fetch(url, { headers: apiHeaders() });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+async function countDistinct(field, timeRange) {
+  timeRange = timeRange || '';
+  var base = SUPABASE_URL + '/rest/v1/' + TABLE;
+  var url = base + '?select=' + field + timeRange + '&limit=10000';
+  var res = await fetch(url, { headers: apiHeaders() });
+  if (!res.ok) return 0;
+  var rows = await res.json();
+  var set = new Set();
+  rows.forEach(function(r) { set.add(r[field]); });
+  return set.size;
+}
+
+// 商品名称中英文映射
+var ITEM_NAMES = {
+  'auto_fire':        '🤖 自动射击模块',
+  'skin_default':     '🎨 默认皮肤',
+  'skin_red':         '🎨 赤红皮肤',
+  'skin_blue':        '🎨 蔚蓝皮肤',
+  'skin_gold':        '🎨 黄金皮肤',
+  'skin_dark':        '🎨 暗影皮肤',
+  'skin_neon':        '🎨 霓虹皮肤',
+};
+
+function itemLabel(id) {
+  if (ITEM_NAMES[id]) return ITEM_NAMES[id];
+  if (id.indexOf('skin_') === 0) return '🎨 ' + id.replace('skin_', '皮肤-');
+  return id;
+}
+
+// ============================================================
+// 加载面板数据
+// ============================================================
+var currentRange = 'today';
+
+async function loadDashboard(range) {
+  range = range || 'today';
+  currentRange = range;
+  var app = document.getElementById('app');
+  var timeLabel = { today:'今日', '7d':'近7天', '30d':'近30天', all:'全部' }[range] || range;
+
+  try {
+    var tf = timeFilter(range);
+
+    // --- 核心指标 ---
+    var totalEvents   = await queryCount(tf);
+    var totalPlayers  = await countDistinct('player_id', tf);
+    var totalSessions = await countDistinct('session_id', tf);
+
+    var gameStarts = await queryCount(tf + '&event_type=eq.game_start');
+    var gameEnds   = await queryCount(tf + '&event_type=eq.game_end');
+    var deaths     = await queryCount(tf + '&event_type=eq.death');
+    var revives    = await queryCount(tf + '&event_type=eq.revive');
+    var logins     = await queryCount(tf + '&event_type=eq.login');
+    var purchases  = await queryCount(tf + '&event_type=eq.purchase');
+    var adWatched  = await queryCount(tf + '&event_type=eq.ad_watched');
+    var dailyClaims= await queryCount(tf + '&event_type=eq.daily_claim');
+    var achievementUnlocks = await queryCount(tf + '&event_type=eq.achievement_unlock');
+
+    // --- 复活方式明细 ---
+    var reviveRows = await queryAll('event_data', tf + '&event_type=eq.revive', '', 1000);
+    var reviveByMethod = { ad:0, token:0, friend:0, gems:0 };
+    reviveRows.forEach(function(r) {
+      try { var d = JSON.parse(r.event_data); if (reviveByMethod.hasOwnProperty(d.method)) reviveByMethod[d.method]++; }
+      catch(e) {}
+    });
+
+    // --- 购买排行 ---
+    var purchaseRows = await queryAll('event_data', tf + '&event_type=eq.purchase', '', 1000);
+    var purchaseByItem = {};
+    purchaseRows.forEach(function(r) {
+      try { var d = JSON.parse(r.event_data); purchaseByItem[d.item] = (purchaseByItem[d.item] || 0) + 1; }
+      catch(e) {}
+    });
+
+    // --- 死亡波次 ---
+    var deathRows = await queryAll('event_data', tf + '&event_type=eq.death', 'timestamp.desc', 500);
+    var deathsByWave = {};
+    deathRows.forEach(function(r) {
+      try { var d = JSON.parse(r.event_data); var w = d.wave || 1; deathsByWave[w] = (deathsByWave[w] || 0) + 1; }
+      catch(e) {}
+    });
+
+    // --- 登录方式 ---
+    var loginRows = await queryAll('event_data', tf + '&event_type=eq.login', '', 500);
+    var loginByMethod = {};
+    loginRows.forEach(function(r) {
+      try { var d = JSON.parse(r.event_data); loginByMethod[d.method] = (loginByMethod[d.method] || 0) + 1; }
+      catch(e) {}
+    });
+
+    // --- 游戏对局平均数据 ---
+    var gameEndRows = await queryAll('event_data', tf + '&event_type=eq.game_end', 'timestamp.desc', 500);
+    var totalScore = 0, totalWave = 0, totalKills = 0, totalDuration = 0, countEnd = gameEndRows.length;
+    var weaponUsage = {};
+    gameEndRows.forEach(function(r) {
+      try { var d = JSON.parse(r.event_data);
+        totalScore    += (d.score || 0);
+        totalWave     += (d.wave || 1);
+        totalKills    += (d.kills || 0);
+        totalDuration += (d.duration_sec || 0);
+        var w = d.weapon_used || '未知';
+        weaponUsage[w] = (weaponUsage[w] || 0) + 1;
+      } catch(e) {}
+    });
+    var avgScore = countEnd > 0 ? Math.round(totalScore / countEnd) : 0;
+    var avgWave  = countEnd > 0 ? (totalWave / countEnd).toFixed(1) : '0';
+    var avgKills = countEnd > 0 ? Math.round(totalKills / countEnd) : 0;
+    var avgDuration = countEnd > 0 ? Math.round(totalDuration / countEnd) : 0;
+
+    // --- 武器名称映射 ---
+    var WEAPON_NAMES = { pistol:'🔫 手枪', shotgun:'💥 霰弹枪', smg:'⚡ 冲锋枪', sniper:'🎯 狙击枪' };
+
+    // --- 计算比率 ---
+    var reviveRate  = gameStarts > 0 ? Math.round(revives / gameStarts * 100) : 0;
+    var deathRate   = gameStarts > 0 ? Math.round(deaths / gameStarts * 100) : 0;
+    var adFillRate  = deaths > 0 ? Math.round(reviveByMethod.ad / deaths * 100) : 0;
+
+    // --- 渲染 ---
+    app.innerHTML = ''
+      // ===== KPI 卡片 =====
+      + '<div class="kpi-grid">'
+      + kpiCard('👥', totalPlayers, '活跃玩家', timeLabel + '独立用户数')
+      + kpiCard('🎮', gameStarts, '对局数', '累计开局次数')
+      + kpiCard('💀', deaths, '死亡数', '死亡率 ' + deathRate + '%')
+      + kpiCard('🔄', revives, '复活数', '复活率 ' + reviveRate + '%')
+      + kpiCard('📺', reviveByMethod.ad, '广告复活', '广告填充率 ' + adFillRate + '%')
+      + kpiCard('👥', reviveByMethod.friend, '好友复活', '社交裂变次数')
+      + kpiCard('🛒', purchases, '商店购买', '累计交易次数')
+      + kpiCard('📅', dailyClaims, '签到数', '每日签到人次')
+      + kpiCard('⭐', avgScore, '均分', '场均得分')
+      + kpiCard('🌊', avgWave, '均波次', '场均到达波次')
+      + kpiCard('💀', avgKills, '均击杀', '场均击杀数')
+      + kpiCard('⏱️', avgDuration + '秒', '均时长', '场均游戏时长')
+      + '</div>'
+
+      // ===== 双列布局 =====
+      + '<div class="cols-2">'
+
+      // --- 复活转化漏斗 ---
+      + '<div class="section">'
+      + '<h2>🔄 复活转化漏斗</h2>'
+      + funnelBar('开局',    gameStarts, gameStarts, '#16c79a', '局')
+      + funnelBar('死亡',    deaths,     gameStarts, '#e94560', '次')
+      + funnelBar('广告复活', reviveByMethod.ad,   gameStarts, '#f39c12', '次')
+      + funnelBar('好友复活', reviveByMethod.friend,gameStarts, '#3498db', '次')
+      + funnelBar('令牌复活', reviveByMethod.token, gameStarts, '#2ecc71', '次')
+      + funnelBar('钻石复活', reviveByMethod.gems,  gameStarts, '#a855f7', '次')
+      + '</div>'
+
+      // --- 复活方式占比 ---
+      + '<div class="section">'
+      + '<h2>📊 复活方式占比</h2>'
+      + '<table class="data-table">'
+      + '<tr><th>复活方式</th><th>次数</th><th>占比</th></tr>'
+      + ['ad','token','friend','gems'].map(function(m) {
+          var count = reviveByMethod[m] || 0;
+          var pct = revives > 0 ? Math.round(count / revives * 100) : 0;
+          var icons = {ad:'📺 观看广告', token:'🎫 复活令牌', friend:'👥 好友助力', gems:'💎 花费钻石'};
+          return '<tr><td>' + (icons[m] || m) + '</td><td class="num">' + count + '</td><td class="num">' + pct + '%</td></tr>';
+        }).join('')
+      + '</table></div>'
+
+      + '</div>'  // end cols-2
+
+      // ===== 双列布局2 =====
+      + '<div class="cols-2">'
+
+      // --- 死亡波次分布 ---
+      + '<div class="section">'
+      + '<h2>💀 死亡波次分布</h2>'
+      + '<p class="section-desc">玩家最容易在哪个波次阵亡（难度平衡参考）</p>'
+      + (Object.keys(deathsByWave).length > 0
+          ? Object.entries(deathsByWave).sort(function(a,b){ return a[0]-b[0]; }).slice(0, 15).map(function(e) {
+              var wave = e[0], count = e[1];
+              var maxCount = Math.max.apply(null, Object.values(deathsByWave));
+              var pct = maxCount > 0 ? Math.round(count / maxCount * 100) : 0;
+              return '<div class="bar-row">'
+                + '<span class="bar-label">第 ' + wave + ' 波</span>'
+                + '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:linear-gradient(90deg,#e94560,#ff9800)"></div>'
+                + '<span class="bar-val">' + count + ' 次</span></div></div>';
+            }).join('')
+          : '<p style="color:var(--text-dim);text-align:center;padding:16px">暂无数据</p>')
+      + '</div>'
+
+      // --- 武器使用分布 ---
+      + '<div class="section">'
+      + '<h2>🔫 武器使用分布</h2>'
+      + '<p class="section-desc">不同武器的选择率（反映武器平衡性）</p>'
+      + '<table class="data-table">'
+      + '<tr><th>武器</th><th>使用次数</th><th>占比</th></tr>'
+      + Object.entries(weaponUsage).sort(function(a,b){ return b[1]-a[1]; }).map(function(e) {
+          var name = WEAPON_NAMES[e[0]] || e[0];
+          var pct = countEnd > 0 ? Math.round(e[1] / countEnd * 100) : 0;
+          return '<tr><td>' + name + '</td><td class="num">' + e[1] + '</td><td class="num">' + pct + '%</td></tr>';
+        }).join('')
+      + (Object.keys(weaponUsage).length === 0 ? '<tr><td colspan="3" style="text-align:center;color:var(--text-dim)">暂无数据</td></tr>' : '')
+      + '</table></div>'
+
+      + '</div>'  // end cols-2
+
+      // ===== 双列布局3 =====
+      + '<div class="cols-2">'
+
+      // --- 登录方式 ---
+      + '<div class="section">'
+      + '<h2>🔑 登录方式分布</h2>'
+      + '<table class="data-table">'
+      + '<tr><th>登录方式</th><th>次数</th></tr>'
+      + Object.entries(loginByMethod).map(function(e) {
+          var labels = {phone:'📱 手机验证码', password:'🔐 密码登录', email:'📧 邮箱登录'};
+          return '<tr><td>' + (labels[e[0]] || e[0]) + '</td><td class="num">' + e[1] + '</td></tr>';
+        }).join('')
+      + (Object.keys(loginByMethod).length === 0 ? '<tr><td colspan="2" style="text-align:center;color:var(--text-dim)">暂无数据</td></tr>' : '')
+      + '</table></div>'
+
+      // --- 商店购买排行 ---
+      + '<div class="section">'
+      + '<h2>🛒 商店购买排行</h2>'
+      + '<p class="section-desc">最受欢迎的商品（反映付费意愿）</p>'
+      + '<table class="data-table">'
+      + '<tr><th>商品名称</th><th>购买次数</th></tr>'
+      + Object.entries(purchaseByItem).sort(function(a,b){ return b[1]-a[1]; }).map(function(e) {
+          return '<tr><td>' + itemLabel(e[0]) + '</td><td class="num">' + e[1] + '</td></tr>';
+        }).join('')
+      + (Object.keys(purchaseByItem).length === 0 ? '<tr><td colspan="2" style="text-align:center;color:var(--text-dim)">暂无数据</td></tr>' : '')
+      + '</table></div>'
+
+      + '</div>'  // end cols-2
+
+      // ===== 总计行 =====
+      + '<div class="section" style="margin-top:10px">'
+      + '<h2>📋 数据摘要（' + timeLabel + '）</h2>'
+      + '<table class="data-table">'
+      + '<tr><th>指标</th><th>数值</th><th>指标</th><th>数值</th></tr>'
+      + '<tr><td>👥 独立玩家</td><td class="num">' + totalPlayers + '</td><td>🔑 登录次数</td><td class="num">' + logins + '</td></tr>'
+      + '<tr><td>🔗 独立会话</td><td class="num">' + totalSessions + '</td><td>▶️ 游戏开局</td><td class="num">' + gameStarts + '</td></tr>'
+      + '<tr><td>💀 累计死亡</td><td class="num">' + deaths + '</td><td>🔄 累计复活</td><td class="num">' + revives + '</td></tr>'
+      + '<tr><td>🛒 商店购买</td><td class="num">' + purchases + '</td><td>📺 广告观看</td><td class="num">' + adWatched + '</td></tr>'
+      + '<tr><td>📅 签到人次</td><td class="num">' + dailyClaims + '</td><td>🏆 成就解锁</td><td class="num">' + achievementUnlocks + '</td></tr>'
+      + '<tr><td>📊 总事件数</td><td class="num">' + totalEvents + '</td><td>⏱️ 场均时长</td><td class="num">' + avgDuration + ' 秒</td></tr>'
+      + '</table></div>'
+
+      // ===== 页脚 =====
+      + '<div class="footer">'
+      + '📊 数据来源：Supabase <code style="background:rgba(255,255,255,0.06);padding:1px 6px;border-radius:4px">game_events</code> 表 · '
+      + '刷新时间：' + new Date().toLocaleString('zh-CN', {hour12:false}) + ' · '
+      + '<a href="javascript:location.reload()">🔄 刷新数据</a> · '
+      + '<a href="index.html">🎮 返回游戏</a>'
+      + '</div>';
+  } catch(e) {
+    app.innerHTML = '<div class="error">'
+      + '<p>❌ 数据加载失败</p>'
+      + '<p style="font-size:0.8rem">' + e.message + '</p>'
+      + '<p style="font-size:0.75rem;color:var(--text-dim)">请检查：<br>'
+      + '1. Supabase 中是否已创建 <code>game_events</code> 表<br>'
+      + '2. 是否已执行 <code>sql/create_tables.sql</code><br>'
+      + '3. 网络连接是否正常</p>'
+      + '<button onclick="location.reload()">🔄 重新加载</button>'
+      + '</div>';
+  }
+}
+
+// ===== 帮助函数 =====
+function kpiCard(icon, value, label, sub) {
+  return '<div class="kpi-card">'
+    + '<div class="kpi-icon">' + icon + '</div>'
+    + '<div class="kpi-value">' + (value != null ? value : 0) + '</div>'
+    + (sub ? '<div class="kpi-sub">' + sub + '</div>' : '')
+    + '<div class="kpi-label">' + label + '</div>'
+    + '</div>';
+}
+
+function funnelBar(label, count, total, color, unit) {
+  var pct = total > 0 ? Math.round(count / total * 100) : 0;
+  return '<div class="bar-row">'
+    + '<span class="bar-label">' + label + '</span>'
+    + '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:' + color + '"></div>'
+    + '<span class="bar-val">' + count + ' ' + unit + ' (' + pct + '%)</span></div></div>';
+}
+
+// ===== 时间筛选按钮 =====
+document.getElementById('time-filter').addEventListener('click', function(e) {
+  if (e.target.classList.contains('time-btn')) {
+    document.querySelectorAll('.time-btn').forEach(function(b) { b.classList.remove('active'); });
+    e.target.classList.add('active');
+    document.getElementById('app').innerHTML = '<div class="loading"><span class="spinner"></span>正在加载数据...</div>';
+    loadDashboard(e.target.dataset.range);
+  }
+});
+
+// ===== 启动 =====
+loadDashboard('today');
+</script>
+</body>
+</html>

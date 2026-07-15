@@ -24,6 +24,9 @@
 	<!-- Supabase 实时数据库（好友复活验证）— 直接通过REST API -->
 	<script src="js/supabase-db.js"></script>
 
+	<!-- 游戏分析统计 -->
+	<script src="js/analytics.js"></script>
+
 	<!-- Monetag → AdManager adapter（必须在 game.js 之前加载） -->
 	<script src="js/ads-monetag.js"></script>
 </head>
@@ -37,11 +40,6 @@
     <div class="login-content">
       <h1 class="game-title">🔥 生存竞技场</h1>
       <p class="subtitle">SURVIVAL ARENA</p>
-
-      <div class="login-tabs">
-        <button class="login-tab active" data-tab="login">登录</button>
-        <button class="login-tab" data-tab="register">注册</button>
-      </div>
 
       <div class="login-form" id="login-form">
         <!-- Input type toggle -->
@@ -69,18 +67,12 @@
           <input type="password" id="login-password" class="form-input" placeholder="请输入密码">
         </div>
 
-        <!-- Confirm password (register only) -->
-        <div class="form-group" id="confirm-group" style="display:none;">
-          <input type="password" id="login-confirm" class="form-input" placeholder="请确认密码">
-        </div>
-
         <!-- Status message -->
         <div class="form-status hidden" id="form-status"></div>
 
         <!-- Submit button -->
         <button class="btn btn-play" id="btn-login-submit">登录</button>
 
-        <p class="form-footer" id="form-footer">还没有账号？<span class="link" data-tab="register">立即注册</span></p>
       </div>
     </div>
   </div>
@@ -343,6 +335,12 @@
       <div class="rank-progress-container">
         <div class="rank-progress-bar" id="rank-progress-bar"></div>
         <span class="rank-progress-text" id="rank-progress-text"></span>
+      </div>
+
+      <!-- All Rank Tiers -->
+      <div class="lb-section">
+        <h3>📊 段位全览</h3>
+        <div class="rank-tiers-list" id="rank-tiers-list"></div>
       </div>
 
       <!-- Personal Bests -->

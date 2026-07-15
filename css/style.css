@@ -1246,6 +1246,74 @@ body {
   margin-bottom: 8px;
   color: var(--gold);
 }
+
+/* Rank Tiers List */
+.rank-tiers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rank-tier-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 2px solid transparent;
+  transition: all 0.2s;
+  position: relative;
+}
+.rank-tier-item.current {
+  border-color: var(--gold);
+  background: rgba(240,192,64,0.1);
+  box-shadow: 0 0 10px rgba(240,192,64,0.15);
+}
+.rank-tier-item.unlocked {
+  border-color: rgba(255,255,255,0.08);
+  opacity: 0.9;
+}
+.rank-tier-item.locked {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+.rank-tier-item .tier-icon {
+  font-size: 1.6rem;
+  min-width: 36px;
+  text-align: center;
+}
+.rank-tier-item .tier-info {
+  flex: 1;
+  min-width: 0;
+}
+.rank-tier-item .tier-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.rank-tier-item .tier-req {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.rank-tier-item .tier-badge {
+  font-size: 0.7rem;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.rank-tier-item.current .tier-badge {
+  background: var(--gold);
+  color: #000;
+}
+.rank-tier-item.unlocked .tier-badge {
+  background: rgba(22,199,154,0.25);
+  color: var(--accent);
+}
+.rank-tier-item.locked .tier-badge {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-dim);
+}
 .lb-stats-row {
   display: flex;
   gap: 16px;

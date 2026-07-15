@@ -117,43 +117,12 @@ const Auth = {
     return { allowed, reason: allowed ? '' : '该账号没有权限登录，请联系管理员' };
   },
 
-  // Register new user
-  async register(identifier, password) {
-    await this._delay();
-    const users = this._getUsers();
-    const exists = users.find(u => u.phone === identifier || u.email === identifier);
-    if (exists) return { success: false, error: '该账号已被注册' };
-
-    // Check whitelist
-    const whitelist = this._getWhitelist();
-    if (whitelist.length > 0) {
-      const allowed = whitelist.some(w => {
-        if (/^1[3-9]\d{9}$/.test(w)) return identifier === w;
-        return identifier.toLowerCase() === w.toLowerCase();
-      });
-      if (!allowed) return { success: false, error: '该账号不在白名单中，无法注册' };
-    }
-
-    const user = {
-      id: 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      phone: this._idType(identifier) === 'phone' ? identifier : '',
-      email: this._idType(identifier) === 'email' ? identifier : '',
-      password: btoa(password), // Base64 encode (simulated hashing — use bcrypt in production)
-      createdAt: Date.now(),
-      lastLogin: Date.now(),
-    };
-    users.push(user);
-    this._saveUsers(users);
-    this._setSession(user);
-    return { success: true, user };
-  },
-
   // Login
   async login(identifier, password) {
     await this._delay();
     const users = this._getUsers();
     const user = users.find(u => u.phone === identifier || u.email === identifier);
-    if (!user) return { success: false, error: '账号不存在，请先注册' };
+    if (!user) return { success: false, error: '账号不存在，请联系管理员创建账号' };
 
     // Check whitelist
     const whitelist = this._getWhitelist();
@@ -187,23 +156,14 @@ const Auth = {
     delete codes[phone];
     this._saveCodes(codes);
 
-    // Check if user exists, if not auto-register
+    // Check if user exists
     const users = this._getUsers();
     let user = users.find(u => u.phone === phone);
     if (!user) {
-      user = {
-        id: 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-        phone, email: '',
-        password: btoa('default' + phone.slice(-4)),
-        createdAt: Date.now(),
-        lastLogin: Date.now(),
-      };
-      users.push(user);
-      this._saveUsers(users);
-    } else {
-      user.lastLogin = Date.now();
-      this._saveUsers(users);
+      return { success: false, error: '账号不存在，请联系管理员创建账号' };
     }
+    user.lastLogin = Date.now();
+    this._saveUsers(users);
     this._setSession(user);
     return { success: true, user };
   },
@@ -1376,6 +1336,9 @@ const game = {
     this.startNextWave();
     this.showScreen('game-screen');
     Sound.init();
+    // 📊 埋点：开始游戏
+    this._gameStartTime = Date.now();
+    Analytics.trackGameStart(0, this.player.weaponType);
   },
 
   startNextWave() {
@@ -1535,7 +1498,7 @@ const game = {
     this.showToast(pu.type.text);
   },
 
-  revive() {
+  revive(method) {
     // Enforce MAX_REVIVES_PER_RUN — one revive per game session
     if (this.reviveUsed) {
       this.showToast('⚠️ 本局已复活过一次，无法再次复活');
@@ -1548,6 +1511,9 @@ const game = {
     this.player.y = canvas.height / 2;
     this.state = 'playing';
     this.reviveUsed = true;
+    this._reviveMethod = method || 'unknown';
+    // 📊 埋点：复活方式
+    Analytics.trackRevive(this._reviveMethod);
     Sound.revive();
     spawnParticles(this.player.x, this.player.y, 20, '#16c79a', 8, 1);
     this.showScreen('game-screen');
@@ -1580,27 +1546,35 @@ const game = {
   async checkReferral() {
     const params = new URLSearchParams(window.location.search);
     const refId = params.get('ref');
+    const sessionId = params.get('sid') || 'legacy';
     if (refId && refId !== Storage.getPlayerId()) {
-      // Check if already claimed (local + server dedup)
+      // Dedup key: playerId + sessionId — prevents reuse across different game sessions
+      const dedupKey = refId + '::' + sessionId;
       const claimedRefs = Storage.get('claimedRefs', []);
-      if (!claimedRefs.includes(refId)) {
+      // Also check for legacy (pre-session-ID) claims of the same player
+      const alreadyClaimed = claimedRefs.includes(dedupKey) || claimedRefs.includes(refId);
+      if (!alreadyClaimed) {
         // Give bonus to new player
         this.coins = Storage.get('coins', 0) + 50;
         Storage.set('coins', this.coins);
         this.showToast('🎉 通过好友链接加入！获得 50 金币奖励！');
 
-        // Mark as claimed locally (prevents duplicate claims)
-        claimedRefs.push(refId);
+        // Mark as claimed locally (prevents duplicate claims per session)
+        claimedRefs.push(dedupKey);
         Storage.set('claimedRefs', claimedRefs);
+
+        // Encode session ID into from_player: "friendId::sessionId"
+        // so the sharer can verify this specific revive session
+        const fromPayload = Storage.getPlayerId() + '::' + sessionId;
 
         // ✅ Write to Supabase so Player A can verify on THEIR device
         try {
-          await SupabaseDB.addRevive(Storage.getPlayerId(), refId);
-          console.log('[Referral] ✅ Revive token sent to Supabase for player:', refId);
+          await SupabaseDB.addRevive(fromPayload, refId);
+          console.log('[Referral] ✅ Revive token sent to Supabase for player:', refId, 'session:', sessionId);
         } catch (err) {
           console.warn('[Referral] Supabase unreachable, using localStorage fallback:', err.message);
           const pendingRevives = Storage.get('pendingRevives', []);
-          pendingRevives.push({ from: Storage.getPlayerId(), to: refId, time: Date.now() });
+          pendingRevives.push({ from: fromPayload, to: refId, time: Date.now() });
           Storage.set('pendingRevives', pendingRevives);
         }
       }
@@ -1611,6 +1585,10 @@ const game = {
     const id = Storage.getPlayerId();
     const url = new URL(window.location.href);
     url.searchParams.set('ref', id);
+    // Include unique revive session ID so each death generates a different link
+    if (this._reviveSessionId) {
+      url.searchParams.set('sid', this._reviveSessionId);
+    }
     return url.toString();
   },
 
@@ -1720,7 +1698,7 @@ const game = {
       if (this.reviveTokens > 0) {
         this.reviveTokens--;
         Storage.set('reviveTokens', this.reviveTokens);
-        this.revive();
+        this.revive('token');
       }
     });
     document.getElementById('btn-revive-friend').addEventListener('click', () => this.showFriendModal());
@@ -1728,7 +1706,7 @@ const game = {
       if (this.gems >= 5) {
         this.gems -= 5;
         Storage.set('gems', this.gems);
-        this.revive();
+        this.revive('gems');
       } else {
         this.showToast('💎 钻石不足！需要 5 钻石');
       }
@@ -1835,45 +1813,17 @@ const game = {
   // --- Login System UI ---
   initLoginScreen() {
     const self = this;
-    let currentTab = 'login';
     let currentType = 'phone';
 
     const loginScreen = document.getElementById('login-screen');
-    const loginTabs = loginScreen.querySelectorAll('.login-tab');
     const typeBtns = loginScreen.querySelectorAll('.type-btn');
     const identifierInput = document.getElementById('login-identifier');
     const passwordInput = document.getElementById('login-password');
-    const confirmGroup = document.getElementById('confirm-group');
-    const confirmInput = document.getElementById('login-confirm');
     const codeGroup = document.getElementById('code-group');
     const codeInput = document.getElementById('login-code');
     const sendCodeBtn = document.getElementById('btn-send-code');
     const submitBtn = document.getElementById('btn-login-submit');
-    const formFooter = document.getElementById('form-footer');
     const identifierHint = document.getElementById('identifier-hint');
-
-    const switchTab = (tab) => {
-      currentTab = tab;
-      loginTabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-      submitBtn.textContent = tab === 'login' ? '登录' : '注册';
-      confirmGroup.style.display = tab === 'register' ? 'block' : 'none';
-      codeGroup.style.display = (tab === 'login' && currentType === 'phone') ? 'block' : 'none';
-      formFooter.innerHTML = tab === 'login'
-        ? '还没有账号？<span class="link" data-tab="register">立即注册</span>'
-        : '已有账号？<span class="link" data-tab="login">立即登录</span>';
-      self._clearStatus();
-    };
-
-    // Footer link delegation (single listener, no duplicates)
-    formFooter.addEventListener('click', (e) => {
-      if (e.target.classList.contains('link')) {
-        switchTab(e.target.dataset.tab);
-      }
-    });
-
-    loginTabs.forEach(tab => {
-      tab.addEventListener('click', () => switchTab(tab.dataset.tab));
-    });
 
     // Input type toggle
     typeBtns.forEach(btn => {
@@ -1884,8 +1834,8 @@ const game = {
           identifierInput.placeholder = '请输入手机号';
           identifierInput.maxLength = 11;
           identifierHint.textContent = '';
-          codeGroup.style.display = currentTab === 'login' ? 'block' : 'none';
-          passwordInput.placeholder = currentTab === 'login' ? '请输入密码或使用验证码登录' : '请输入密码';
+          codeGroup.style.display = 'block';
+          passwordInput.placeholder = '请输入密码或使用验证码登录';
         } else {
           identifierInput.placeholder = '请输入邮箱地址';
           identifierInput.maxLength = 50;
@@ -1927,11 +1877,10 @@ const game = {
     });
 
     // Submit
-    submitBtn.addEventListener('click', () => self._handleLoginSubmit(currentTab, currentType));
+    submitBtn.addEventListener('click', () => self._handleLoginSubmit(currentType));
     identifierInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') passwordInput.focus(); });
-    passwordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') self._handleLoginSubmit(currentTab, currentType); });
-    confirmInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') self._handleLoginSubmit(currentTab, currentType); });
-    codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') self._handleLoginSubmit(currentTab, currentType); });
+    passwordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') self._handleLoginSubmit(currentType); });
+    codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') self._handleLoginSubmit(currentType); });
   },
 
   _showStatus(type, msg) {
@@ -1947,7 +1896,7 @@ const game = {
     el.textContent = '';
   },
 
-  async _handleLoginSubmit(tab, type) {
+  async _handleLoginSubmit(type) {
     const identifier = document.getElementById('login-identifier').value.trim();
     const password = document.getElementById('login-password').value;
     const code = document.getElementById('login-code').value.trim();
@@ -1957,7 +1906,7 @@ const game = {
     if (!valId.ok) { this._showStatus('error', valId.error); return; }
 
     // If phone login with code
-    if (tab === 'login' && type === 'phone' && code.length === 6) {
+    if (type === 'phone' && code.length === 6) {
       this._showStatus('success', '验证中...');
       const result = await Auth.loginWithCode(identifier, code);
       if (result.success) {
@@ -1972,36 +1921,17 @@ const game = {
     // Validate password
     if (!password) { this._showStatus('error', '请输入密码'); return; }
 
-    if (tab === 'register') {
-      const confirm = document.getElementById('login-confirm').value;
-      if (password.length < 6) { this._showStatus('error', '密码至少6位'); return; }
-      if (password !== confirm) { this._showStatus('error', '两次密码输入不一致'); return; }
+    // Login
+    this._showStatus('success', '正在登录...');
+    const perm = await Auth.checkPermission(identifier);
+    if (!perm.allowed) { this._showStatus('error', perm.reason); return; }
 
-      this._showStatus('success', '正在注册...');
-      // Check permission first
-      const perm = await Auth.checkPermission(identifier);
-      if (!perm.allowed) { this._showStatus('error', perm.reason); return; }
-
-      const result = await Auth.register(identifier, password);
-      if (result.success) {
-        this._showStatus('success', '注册成功！');
-        setTimeout(() => this._onLoginSuccess(result.user), 500);
-      } else {
-        this._showStatus('error', result.error);
-      }
+    const result = await Auth.login(identifier, password);
+    if (result.success) {
+      this._showStatus('success', '登录成功！');
+      setTimeout(() => this._onLoginSuccess(result.user), 500);
     } else {
-      // Login
-      this._showStatus('success', '正在登录...');
-      const perm = await Auth.checkPermission(identifier);
-      if (!perm.allowed) { this._showStatus('error', perm.reason); return; }
-
-      const result = await Auth.login(identifier, password);
-      if (result.success) {
-        this._showStatus('success', '登录成功！');
-        setTimeout(() => this._onLoginSuccess(result.user), 500);
-      } else {
-        this._showStatus('error', result.error);
-      }
+      this._showStatus('error', result.error);
     }
   },
 
@@ -2011,12 +1941,19 @@ const game = {
     document.getElementById('btn-logout').style.display = 'inline-block';
     this.showScreen('main-menu');
     this.updateMenuStats();
+    // 📊 埋点：登录成功
+    const loginMethod = user.phone ? 'phone' : 'email';
+    Analytics.trackLogin(loginMethod);
   },
 
   showScreen(id) {
     document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
     const screen = document.getElementById(id);
     if (screen) screen.classList.remove('hidden');
+    // 📊 埋点：页面浏览
+    if (id !== 'game-screen') {
+      Analytics.trackPageView(id);
+    }
   },
 
   pause() {
@@ -2040,7 +1977,8 @@ const game = {
       onComplete: () => {
         // User watched the full ad -> give reward
         this.adWatched = true;
-        this.revive();
+        this.revive('ad');
+        Analytics.trackAdWatched('rewarded', true);
         this.showToast('📺 广告观看完成！已复活');
         document.getElementById('ad-modal').classList.add('hidden');
       },
@@ -2068,6 +2006,9 @@ const game = {
     this._shareMethod = null;
     this._verifyChecked = false;
     this._verificationPollTimer = null;
+
+    // Generate unique session ID for THIS revive — each death gets a different link
+    this._reviveSessionId = 'rs_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 
     // Reset UI
     document.getElementById('share-link').value = this.generateShareLink();
@@ -2199,18 +2140,24 @@ const game = {
     const doCheck = async function() {
       checkCount++;
       const myId = Storage.getPlayerId();
+      const currentSessionId = self._reviveSessionId;
       let foundRevive = null;
 
-      // ✅ Query Supabase for pending revive
+      // ✅ Query Supabase for pending revive — filter by session ID
       try {
-        const data = await SupabaseDB.checkRevives(myId);
+        const data = await SupabaseDB.checkAllRevives(myId);
         if (data && data.length > 0) {
-          foundRevive = data[0];
+          // Only match revives from THIS game session's unique link
+          foundRevive = data.find(function(r) {
+            return r.from_player && r.from_player.endsWith('::' + currentSessionId);
+          }) || null;
         }
       } catch (err) {
         console.warn('[Verify] Supabase query failed, trying localStorage:', err.message);
         const pendingRevives = Storage.get('pendingRevives', []);
-        foundRevive = pendingRevives.find(function(r) { return r.to === myId; });
+        foundRevive = pendingRevives.find(function(r) {
+          return r.to === myId && r.from && r.from.endsWith('::' + currentSessionId);
+        });
       }
 
       if (foundRevive) {
@@ -2234,16 +2181,23 @@ const game = {
         document.querySelector('.verify-step[data-step="2"]').classList.add('done');
         document.querySelector('.verify-step[data-step="2"]').classList.remove('active');
 
-        // Clean up localStorage fallback records (always, regardless of Supabase)
+        // Clean up localStorage fallback — only the matched record
         const pendingRevives = Storage.get('pendingRevives', []);
-        const remaining = pendingRevives.filter(function(r) { return r.to !== myId; });
+        const remaining = pendingRevives.filter(function(r) {
+          return !(r.to === myId && r.from && r.from.endsWith('::' + currentSessionId));
+        });
         if (remaining.length !== pendingRevives.length) {
           Storage.set('pendingRevives', remaining);
         }
 
-        // Remove the used pending revive from Supabase
+        // Remove the used pending revive from Supabase — target specific row by ID
         try {
-          await SupabaseDB.deleteRevives(myId);
+          if (foundRevive.id) {
+            await SupabaseDB.deleteReviveById(foundRevive.id);
+          } else {
+            // Fallback: delete by player (broad)
+            await SupabaseDB.deleteRevives(myId);
+          }
         } catch (e) {
           console.warn('[Verify] Supabase delete failed:', e.message);
         }
@@ -2313,7 +2267,7 @@ const game = {
     this.resetFriendModal();
 
     // Revive the player
-    this.revive();
+    this.revive('friend');
 
     // Extended 3-second invincibility shield for share revive
     this.player.iframeTimer = 3000; // 3 seconds in ms
@@ -2650,6 +2604,8 @@ const game = {
     }
 
     Sound.powerup();
+    // 📊 埋点：武器升级
+    Analytics.trackWeaponUpgrade(weaponId, statId, currentLvl + 1);
     this.showToast('⬆️ ' + weapon.name + ' 升级！Lv.' + level);
     this.renderPauseContent();
   },
@@ -2690,6 +2646,8 @@ const game = {
     this.autoFire = true;
     Storage.set('autoFireOwned', true);
     Sound.powerup();
+    // 📊 埋点：购买
+    Analytics.trackShopPurchase('auto_fire', currency, currency === 'coins' ? coinCost : gemCost);
     this.showToast('🤖 自动射击模块永久解锁！');
     this.updateHUD();
     this.renderPauseContent();
@@ -2956,6 +2914,8 @@ const game = {
     claimBtn.onclick = () => {
       const reward = this.claimDaily();
       if (reward) {
+        // 📊 埋点：每日签到
+        Analytics.trackDailyClaim(this.dailyStreak, reward);
         let msg = '🎁 获得: ';
         if (reward.coinAmount) msg += reward.coinAmount + ' 金币 ';
         if (reward.gems) msg += reward.gems + ' 钻石 ';
@@ -2996,6 +2956,9 @@ const game = {
             skin.owned = true;
             Storage.set('gems', this.gems);
             Storage.set('skins', this.skins);
+            // 📊 埋点：皮肤购买
+            Analytics.trackShopPurchase('skin_' + skinId, 'gems', skin.price);
+            Analytics.trackSkinSelect(skinId);
             this.showToast('✅ 皮肤购买成功！');
             this.showSkins();
           }
@@ -3004,6 +2967,8 @@ const game = {
         } else {
           this.equippedSkin = skinId;
           Storage.set('equippedSkin', skinId);
+          // 📊 埋点：切换皮肤
+          Analytics.trackSkinSelect(skinId);
           this.showToast('✅ 皮肤已装备！');
           this.showSkins();
         }
@@ -3068,6 +3033,8 @@ const game = {
     if (newlyUnlocked.length > 0) {
       Storage.set('achievements', this.achievements);
       newlyUnlocked.forEach(a => {
+        // 📊 埋点：成就解锁
+        Analytics.trackAchievement(a.id);
         this.showToast(`🏆 成就解锁: ${a.icon} ${a.name}！`);
       });
     }
@@ -3150,6 +3117,7 @@ const game = {
     const nextRank = this.getNextRank();
     const progress = this.getRankProgress();
     const percentile = this.getSimulatedPercentile();
+    const currentIdx = RANK_TIERS.indexOf(rank);
     document.getElementById('rank-display').innerHTML = `${rank.icon} ${rank.name} <span style="font-size:0.7rem;color:var(--text-dim)">— 超越 ${percentile}% 战士</span>`;
     document.getElementById('rank-progress-bar').style.width = progress + '%';
     if (nextRank) {
@@ -3157,6 +3125,30 @@ const game = {
     } else {
       document.getElementById('rank-progress-text').textContent = '已达最高段位！';
     }
+
+    // All rank tiers
+    const tiersEl = document.getElementById('rank-tiers-list');
+    tiersEl.innerHTML = RANK_TIERS.map((t, i) => {
+      let status = 'locked';
+      let badge = '🔒 未解锁';
+      if (i < currentIdx) {
+        status = 'unlocked';
+        badge = '✅ 已达成';
+      } else if (i === currentIdx) {
+        status = 'current';
+        const pct = this.getRankProgress();
+        badge = `⭐ 当前 · ${pct}%`;
+      }
+      const waveRange = `到达第 ${t.minWave} 波`;
+      return `<div class="rank-tier-item ${status}">
+        <span class="tier-icon">${t.icon}</span>
+        <div class="tier-info">
+          <div class="tier-name" style="color:${status === 'locked' ? 'var(--text-dim)' : t.color}">${t.name}</div>
+          <div class="tier-req">${waveRange}</div>
+        </div>
+        <span class="tier-badge">${badge}</span>
+      </div>`;
+    }).join('');
 
     // Personal bests
     document.getElementById('lb-high-score').textContent = this.highScore;
@@ -3396,6 +3388,19 @@ const game = {
     // Check player death
     if (!p.alive && this.state === 'playing') {
       Sound.death();
+      // 📊 埋点：玩家死亡
+      const gameDuration = this._gameStartTime ? Math.floor((Date.now() - this._gameStartTime) / 1000) : 0;
+      Analytics.trackDeath('enemy');
+      Analytics.trackGameEnd({
+        score: this.score,
+        wave: this.wave,
+        kills: this.kills,
+        starsEarned: this.starsEarned,
+        duration: gameDuration,
+        weapon: this.player.weaponType,
+        revived: this.reviveUsed,
+        reviveMethod: this.reviveUsed ? this._reviveMethod : null,
+      });
       spawnParticles(p.x, p.y, 25, '#ff5252', 8, 1);
       document.getElementById('death-score').textContent = this.score;
       document.getElementById('death-wave').textContent = this.wave;

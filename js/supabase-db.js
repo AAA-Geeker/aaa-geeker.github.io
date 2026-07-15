@@ -109,6 +109,26 @@ const SupabaseDB = {
 
     console.log('[DB] ✅ DELETE success');
   },
+
+  // ---- 按 ID 删除单条复活令牌（精准删除，用于按会话删除） ----
+  async deleteReviveById(rowId) {
+    const url = this._base + '?id=eq.' + encodeURIComponent(rowId);
+
+    console.log('[DB] DELETE BY ID →', rowId);
+
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: this._headers(),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('[DB] DELETE BY ID failed:', res.status, errText);
+      throw new Error('HTTP ' + res.status + ': ' + errText);
+    }
+
+    console.log('[DB] ✅ DELETE BY ID success');
+  },
 };
 
 console.log('[SupabaseDB] REST API ready — endpoint:', SUPABASE_URL + '/rest/v1/' + TABLE);
