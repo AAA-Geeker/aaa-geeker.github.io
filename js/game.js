@@ -122,17 +122,7 @@ const Auth = {
     await this._delay();
     const users = this._getUsers();
     const user = users.find(u => u.phone === identifier || u.email === identifier);
-    if (!user) return { success: false, error: '账号不存在，请联系管理员创建账号' };
-
-    // Check whitelist
-    const whitelist = this._getWhitelist();
-    if (whitelist.length > 0) {
-      const allowed = whitelist.some(w => {
-        if (/^1[3-9]\d{9}$/.test(w)) return identifier === w;
-        return identifier.toLowerCase() === w.toLowerCase();
-      });
-      if (!allowed) return { success: false, error: '该账号没有权限登录' };
-    }
+    if (!user) return { success: false, error: '账号不存在，请使用手机验证码登录' };
 
     if (btoa(password) !== user.password) return { success: false, error: '密码错误' };
 
@@ -156,14 +146,25 @@ const Auth = {
     delete codes[phone];
     this._saveCodes(codes);
 
-    // Check if user exists
+    // Check if user exists, if not auto-create account
     const users = this._getUsers();
     let user = users.find(u => u.phone === phone);
     if (!user) {
-      return { success: false, error: '账号不存在，请联系管理员创建账号' };
+      // 新用户：手机验证码自动注册
+      user = {
+        id: 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        phone,
+        email: '',
+        password: btoa('p_' + phone.slice(-4) + '_' + Math.random().toString(36).slice(2, 6)),
+        createdAt: Date.now(),
+        lastLogin: Date.now(),
+      };
+      users.push(user);
+      this._saveUsers(users);
+    } else {
+      user.lastLogin = Date.now();
+      this._saveUsers(users);
     }
-    user.lastLogin = Date.now();
-    this._saveUsers(users);
     this._setSession(user);
     return { success: true, user };
   },
@@ -1923,9 +1924,6 @@ const game = {
 
     // Login
     this._showStatus('success', '正在登录...');
-    const perm = await Auth.checkPermission(identifier);
-    if (!perm.allowed) { this._showStatus('error', perm.reason); return; }
-
     const result = await Auth.login(identifier, password);
     if (result.success) {
       this._showStatus('success', '登录成功！');
