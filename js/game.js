@@ -1247,9 +1247,6 @@ const game = {
       { id: 'void', name: '虚空领主', color: '#8e44ad', outline: '#6c3483', owned: false, price: 150 },
     ]);
 
-    // Check referral
-    this.checkReferral();
-
     // Check daily reset
     this.checkDailyReset();
 
@@ -1278,6 +1275,8 @@ const game = {
       document.getElementById('menu-user-display').textContent = '👤 ' + display;
       document.getElementById('btn-logout').style.display = 'inline-block';
       this.showScreen('main-menu');
+      // ✅ 老用户自动登录后检查好友推荐
+      this.checkReferral();
     } else {
       this.showScreen('login-screen');
     }
@@ -1968,6 +1967,8 @@ const game = {
     // 📊 埋点：登录成功
     const loginMethod = user.phone ? 'phone' : 'email';
     Analytics.trackLogin(loginMethod);
+    // ✅ 登录后检查好友推荐（核验好友复活）
+    this.checkReferral();
   },
 
   showScreen(id) {
