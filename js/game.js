@@ -1560,40 +1560,58 @@ const game = {
 
   // --- Referral System ---
   async checkReferral() {
+    // Read ref/sid from URL params first, fall back to sessionStorage
+    // (sessionStorage survives redirects that might strip URL params)
     const params = new URLSearchParams(window.location.search);
-    const refId = params.get('ref');
-    const sessionId = params.get('sid') || 'legacy';
-    if (refId && refId !== Storage.getPlayerId()) {
-      // Dedup key: playerId + sessionId — prevents reuse across different game sessions
-      const dedupKey = refId + '::' + sessionId;
-      const claimedRefs = Storage.get('claimedRefs', []);
-      // Also check for legacy (pre-session-ID) claims of the same player
-      const alreadyClaimed = claimedRefs.includes(dedupKey) || claimedRefs.includes(refId);
-      if (!alreadyClaimed) {
-        // Give bonus to new player
-        this.coins = Storage.get('coins', 0) + 50;
-        Storage.set('coins', this.coins);
-        this.showToast('🎉 通过好友链接加入！获得 50 金币奖励！');
+    let refId = params.get('ref');
+    let sessionId = params.get('sid');
 
-        // Mark as claimed locally (prevents duplicate claims per session)
-        claimedRefs.push(dedupKey);
-        Storage.set('claimedRefs', claimedRefs);
+    // Backup: persist params in sessionStorage so they survive domain redirects
+    if (refId && sessionId) {
+      sessionStorage.setItem('pendingRef', refId);
+      sessionStorage.setItem('pendingSid', sessionId);
+    } else {
+      refId = sessionStorage.getItem('pendingRef');
+      sessionId = sessionStorage.getItem('pendingSid');
+    }
 
-        // Encode session ID into from_player: "friendId::sessionId"
-        // so the sharer can verify this specific revive session
-        const fromPayload = Storage.getPlayerId() + '::' + sessionId;
+    if (!refId || refId === Storage.getPlayerId()) return;
 
-        // ✅ Write to Supabase so Player A can verify on THEIR device
-        try {
-          await SupabaseDB.addRevive(fromPayload, refId);
-          console.log('[Referral] ✅ Revive token sent to Supabase for player:', refId, 'session:', sessionId);
-        } catch (err) {
-          console.warn('[Referral] Supabase unreachable, using localStorage fallback:', err.message);
-          const pendingRevives = Storage.get('pendingRevives', []);
-          pendingRevives.push({ from: fromPayload, to: refId, time: Date.now() });
-          Storage.set('pendingRevives', pendingRevives);
-        }
+    sessionId = sessionId || 'legacy';
+
+    // Dedup key: playerId + sessionId — prevents reuse across different game sessions
+    const dedupKey = refId + '::' + sessionId;
+    const claimedRefs = Storage.get('claimedRefs', []);
+    // Also check for legacy (pre-session-ID) claims of the same player
+    const alreadyClaimed = claimedRefs.includes(dedupKey) || claimedRefs.includes(refId);
+    if (!alreadyClaimed) {
+      // Give bonus to new player
+      this.coins = Storage.get('coins', 0) + 50;
+      Storage.set('coins', this.coins);
+      this.showToast('🎉 通过好友链接加入！获得 50 金币奖励！');
+
+      // Mark as claimed locally (prevents duplicate claims per session)
+      claimedRefs.push(dedupKey);
+      Storage.set('claimedRefs', claimedRefs);
+
+      // Encode session ID into from_player: "friendId::sessionId"
+      // so the sharer can verify this specific revive session
+      const fromPayload = Storage.getPlayerId() + '::' + sessionId;
+
+      // ✅ Write to Supabase so Player A can verify on THEIR device
+      try {
+        await SupabaseDB.addRevive(fromPayload, refId);
+        console.log('[Referral] ✅ Revive token sent to Supabase for player:', refId, 'session:', sessionId);
+      } catch (err) {
+        console.warn('[Referral] Supabase unreachable, using localStorage fallback:', err.message);
+        const pendingRevives = Storage.get('pendingRevives', []);
+        pendingRevives.push({ from: fromPayload, to: refId, time: Date.now() });
+        Storage.set('pendingRevives', pendingRevives);
       }
+
+      // Cleanup sessionStorage after successful processing
+      sessionStorage.removeItem('pendingRef');
+      sessionStorage.removeItem('pendingSid');
     }
   },
 
