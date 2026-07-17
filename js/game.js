@@ -122,7 +122,21 @@ const Auth = {
     await this._delay();
     const users = this._getUsers();
     const user = users.find(u => u.phone === identifier || u.email === identifier);
-    if (!user) return { success: false, error: '账号不存在，请使用手机验证码登录' };
+    if (!user) {
+      // 新用户：邮箱+密码自动注册（手机也可用密码注册）
+      user = {
+        id: 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        phone: this._idType(identifier) === 'phone' ? identifier : '',
+        email: this._idType(identifier) === 'email' ? identifier : '',
+        password: btoa(password),
+        createdAt: Date.now(),
+        lastLogin: Date.now(),
+      };
+      users.push(user);
+      this._saveUsers(users);
+      this._setSession(user);
+      return { success: true, user };
+    }
 
     if (btoa(password) !== user.password) return { success: false, error: '密码错误' };
 
@@ -1842,7 +1856,7 @@ const game = {
           identifierInput.maxLength = 50;
           identifierHint.textContent = '';
           codeGroup.style.display = 'none';
-          passwordInput.placeholder = '请输入密码';
+          passwordInput.placeholder = '设置密码（首次登录自动注册）';
         }
         self._clearStatus();
       });
