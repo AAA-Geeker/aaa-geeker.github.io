@@ -1,5 +1,9 @@
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
 
+button, a, [role="button"], .btn, input, select, textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
 :root {
   --bg: #0a0a0f;
   --surface: #141420;
@@ -13,6 +17,10 @@
   --danger: #e94560;
   --hp-color: #00e676;
   --hp-bg: #333;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 body {
@@ -203,18 +211,20 @@ body {
   top: 0; left: 0; right: 0;
   pointer-events: none;
   z-index: 20;
-  padding: 12px 16px;
+  padding: calc(12px + var(--safe-top)) calc(16px + var(--safe-right)) 12px calc(16px + var(--safe-left));
 }
 .hud-top {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
 }
-.hud-left { min-width: 200px; }
+.hud-left { min-width: 0; flex-shrink: 1; }
 .hp-bar-container {
   background: var(--hp-bg);
   border-radius: 8px;
   height: 20px;
+  max-width: 200px;
+  width: 100%;
   overflow: hidden;
   position: relative;
   border: 1px solid rgba(255,255,255,0.15);
@@ -1020,7 +1030,7 @@ body {
 /* Toast */
 .toast {
   position: fixed;
-  bottom: 30px;
+  bottom: calc(30px + var(--safe-bottom));
   left: 50%;
   transform: translateX(-50%);
   background: var(--surface);
@@ -1417,10 +1427,13 @@ body {
 /* Joystick Area */
 #mobile-joystick-area {
   position: absolute;
-  bottom: 80px;
-  left: 20px;
+  bottom: calc(80px + var(--safe-bottom));
+  left: calc(20px + var(--safe-left));
   width: 140px;
   height: 140px;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 #mobile-joystick {
   width: 120px;
@@ -1430,6 +1443,7 @@ body {
   border: 2px solid rgba(255,255,255,0.2);
   position: relative;
   margin: 10px;
+  touch-action: none;
 }
 #mobile-joystick-thumb {
   width: 50px;
@@ -1447,8 +1461,8 @@ body {
 /* Shoot Button */
 #mobile-shoot-area {
   position: absolute;
-  bottom: 100px;
-  right: 20px;
+  bottom: calc(100px + var(--safe-bottom));
+  right: calc(20px + var(--safe-right));
 }
 #mobile-shoot-btn {
   width: 80px;
@@ -1473,11 +1487,79 @@ body {
   transform: scale(0.9);
 }
 
+/* Dash Button */
+#mobile-dash-btn {
+  position: absolute;
+  bottom: calc(105px + var(--safe-bottom));
+  right: calc(110px + var(--safe-right));
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(79,195,247,0.25);
+  border: 2px solid rgba(79,195,247,0.5);
+  color: #fff;
+  font-size: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+  z-index: 31;
+  transition: background 0.15s, transform 0.15s;
+}
+#mobile-dash-btn:active {
+  background: rgba(79,195,247,0.55);
+  border-color: #4fc3f7;
+  transform: scale(0.9);
+}
+#mobile-dash-btn.dash-ready {
+  animation: dashPulse 1s ease-in-out infinite;
+}
+#mobile-dash-btn.dash-cooldown {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.15);
+  opacity: 0.5;
+}
+@keyframes dashPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79,195,247,0.4); }
+  50% { box-shadow: 0 0 0 12px rgba(79,195,247,0); }
+}
+
+/* Weapon Switch Button */
+#mobile-weapon-btn {
+  position: absolute;
+  bottom: calc(175px + var(--safe-bottom));
+  right: calc(20px + var(--safe-right));
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(168,85,247,0.25);
+  border: 2px solid rgba(168,85,247,0.5);
+  color: #fff;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+  z-index: 31;
+  transition: background 0.15s, transform 0.15s;
+}
+#mobile-weapon-btn:active {
+  background: rgba(168,85,247,0.55);
+  border-color: #a855f7;
+  transform: scale(0.9);
+}
+
 /* Pause Button */
 #mobile-pause-btn {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: calc(10px + var(--safe-top));
+  right: calc(10px + var(--safe-right));
   width: 44px;
   height: 44px;
   border-radius: 50%;
@@ -1488,6 +1570,7 @@ body {
   cursor: pointer;
   z-index: 31;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 /* Auto-fire indicator */
@@ -1538,11 +1621,13 @@ body {
     font-size: 0.9rem;
     padding: 12px 10px;
     min-width: 110px;
+    min-height: 44px;
     touch-action: manipulation;
   }
   .type-btn {
     font-size: 1rem;
     padding: 12px 10px;
+    min-height: 44px;
     touch-action: manipulation;
   }
   .login-content {
@@ -1584,18 +1669,47 @@ body {
 @media (max-width: 600px) {
   .game-title { font-size: 2rem; }
   .menu-stats { font-size: 0.8rem; gap: 8px; }
-  .overlay-content { padding: 20px 16px; }
+  .overlay-content { padding: calc(20px + var(--safe-top)) calc(16px + var(--safe-right)) calc(16px + var(--safe-bottom)) calc(16px + var(--safe-left)); }
   .daily-grid { grid-template-columns: repeat(4,1fr); }
   .skins-grid { grid-template-columns: repeat(2,1fr); }
   .hud-top { font-size: 0.75rem; }
-  .hp-bar-container { width: 140px; height: 16px; }
+  .hp-bar-container { max-width: 140px; height: 16px; }
+  .boss-alert { font-size: 1.5rem; }
+  .wave-announce { font-size: 1.2rem; }
+}
+
+/* Very small screens */
+@media (max-width: 400px) {
+  .hp-bar-container { max-width: 110px; height: 14px; }
+  .hud-top { font-size: 0.65rem; }
+}
+
+/* Landscape orientation - compact mobile controls */
+@media (max-width: 900px) and (orientation: landscape) {
+  .hud-top { font-size: 0.7rem; }
+  .hp-bar-container { max-width: 130px; height: 14px; }
+  .hud-left { min-width: 0; }
+  #mobile-joystick-area { bottom: calc(15px + var(--safe-bottom)); left: calc(8px + var(--safe-left)); width: 100px; height: 100px; }
+  #mobile-joystick { width: 80px; height: 80px; }
+  #mobile-joystick-thumb { width: 36px; height: 36px; }
+  #mobile-shoot-area { bottom: calc(20px + var(--safe-bottom)); right: calc(8px + var(--safe-right)); }
+  #mobile-shoot-btn { width: 56px; height: 56px; font-size: 1.4rem; }
+  #mobile-dash-btn { bottom: calc(20px + var(--safe-bottom)); right: calc(75px + var(--safe-right)); width: 44px; height: 44px; font-size: 1.1rem; }
+  #mobile-weapon-btn { bottom: calc(75px + var(--safe-bottom)); right: calc(8px + var(--safe-right)); width: 36px; height: 36px; font-size: 0.9rem; }
+  #mobile-pause-btn { top: calc(4px + var(--safe-top)); right: calc(4px + var(--safe-right)); width: 36px; height: 36px; font-size: 1rem; }
+  .boss-alert { font-size: 1.2rem; }
+  .wave-announce { font-size: 1rem; }
+  .overlay-content { padding: calc(12px + var(--safe-top)) calc(12px + var(--safe-right)) calc(12px + var(--safe-bottom)) calc(12px + var(--safe-left)); max-height: 75vh; }
+  .death-title { font-size: 1.4rem; }
+  .death-stats { font-size: 0.8rem; }
 }
 
 /* Canvas */
 #game-canvas {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: 100vw;
+  height: 100dvh;
   position: absolute;
   top: 0; left: 0;
+  touch-action: none;
 }

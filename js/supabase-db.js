@@ -21,6 +21,25 @@ const SupabaseDB = {
 
   // ---- 写入复活令牌 ----
   async addRevive(fromPlayerId, toPlayerId) {
+    // Dedup: check for existing unclaimed record before inserting
+    const checkUrl = this._base
+      + '?from_player=eq.' + encodeURIComponent(fromPlayerId)
+      + '&to_player=eq.' + encodeURIComponent(toPlayerId)
+      + '&order=time.desc&limit=1';
+    try {
+      const checkRes = await fetch(checkUrl, { method: 'GET', headers: this._headers() });
+      if (checkRes.ok) {
+        const existing = await checkRes.json();
+        if (existing && existing.length > 0) {
+          console.log('[DB] ⏭️ Duplicate revive skipped, existing id:', existing[0].id);
+          return existing;
+        }
+      }
+    } catch(e) {
+      // If check fails, proceed with insert anyway (fail open)
+      console.warn('[DB] Dedup check failed, proceeding with insert:', e.message);
+    }
+
     const body = JSON.stringify({
       from_player: fromPlayerId,
       to_player: toPlayerId,

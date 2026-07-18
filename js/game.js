@@ -207,6 +207,16 @@ const Auth = {
     return users.find(u => u.id === session.userId) || null;
   },
 
+  // Get a cross-device identity key based on phone/email hash
+  // This allows the same user to be recognized across PC and mobile
+  getCrossDeviceKey() {
+    const user = this.getCurrentUser();
+    if (!user) return null;
+    const raw = user.phone || user.email;
+    if (!raw) return null;
+    return 'xd_' + btoa(raw).replace(/[+/=]/g, '').slice(0, 20);
+  },
+
   logout() {
     Storage.set('session', null);
   },
@@ -1259,6 +1269,11 @@ const game = {
 
     this.resizeCanvas();
     window.addEventListener('resize', () => this.resizeCanvas());
+    // iOS Safari: visualViewport handles URL bar collapse / keyboard
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => this.resizeCanvas());
+      window.visualViewport.addEventListener('scroll', () => this.resizeCanvas());
+    }
 
     // Init sound on first interaction
     document.addEventListener('click', () => Sound.init(), { once: true });
@@ -1287,13 +1302,18 @@ const game = {
   },
 
   resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    // Keep player in bounds
-    if (this.player.x === 0 && this.player.y === 0) {
-      this.player.x = canvas.width / 2;
-      this.player.y = canvas.height / 2;
-    }
+    // Debounce: collapse rapid resize events (iOS URL bar, visualViewport)
+    if (this._resizeTimer) clearTimeout(this._resizeTimer);
+    this._resizeTimer = setTimeout(() => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      // Keep player in bounds
+      if (this.player.x === 0 && this.player.y === 0) {
+        this.player.x = canvas.width / 2;
+        this.player.y = canvas.height / 2;
+      }
+      this._resizeTimer = null;
+    }, 100);
   },
 
   applyUpgrades() {
@@ -1567,15 +1587,22 @@ const game = {
     let sessionId = params.get('sid');
 
     // Backup: persist params in sessionStorage so they survive domain redirects
-    if (refId && sessionId) {
-      sessionStorage.setItem('pendingRef', refId);
-      sessionStorage.setItem('pendingSid', sessionId);
-    } else {
-      refId = sessionStorage.getItem('pendingRef');
-      sessionId = sessionStorage.getItem('pendingSid');
+    // Only fall back individually for missing params (prevents clobbering valid values)
+    try {
+      if (refId) sessionStorage.setItem('pendingRef', refId);
+      if (sessionId) sessionStorage.setItem('pendingSid', sessionId);
+      if (!refId) refId = sessionStorage.getItem('pendingRef');
+      if (!sessionId) sessionId = sessionStorage.getItem('pendingSid');
+    } catch(e) {
+      // sessionStorage may be unavailable (private browsing, iframe sandbox)
+      console.warn('[Referral] sessionStorage unavailable:', e.message);
     }
 
-    if (!refId || refId === Storage.getPlayerId()) return;
+    // Self-referral guard: check both device-local ID and cross-device auth key
+    if (!refId) return;
+    if (refId === Storage.getPlayerId()) return; // same device
+    const crossDeviceKey = Auth.getCrossDeviceKey();
+    if (crossDeviceKey && refId === crossDeviceKey) return; // same user, different device
 
     sessionId = sessionId || 'legacy';
 
@@ -3445,6 +3472,30 @@ const game = {
         reviveMethods: Object.keys(this._usedReviveMethods || {}).join(','),
       });
       spawnParticles(p.x, p.y, 25, '#ff5252', 8, 1);
+
+      // ✅ Auto-consume pending cross-device revives from Supabase
+      if (this._pendingCrossDeviceRevives && this._pendingCrossDeviceRevives.length > 0) {
+        const pendingRevive = this._pendingCrossDeviceRevives.shift();
+        // Fire-and-forget delete from Supabase (don't block game loop)
+        if (pendingRevive.id) {
+          SupabaseDB.deleteReviveById(pendingRevive.id).catch(function(e) {
+            console.warn('[Revive] Failed to delete consumed revive:', e.message);
+          });
+        }
+        // Auto-revive with friend method
+        this._usedReviveMethods = this._usedReviveMethods || {};
+        if (!this._usedReviveMethods['friend']) {
+          this._usedReviveMethods['friend'] = true;
+          this.coins += 50;
+          this.gems += 5;
+          Storage.set('coins', this.coins);
+          Storage.set('gems', this.gems);
+          this.showToast('🎉 好友已为你复活！（跨设备）');
+          this.revive('friend');
+          return; // Skip death screen
+        }
+      }
+
       document.getElementById('death-score').textContent = this.score;
       document.getElementById('death-wave').textContent = this.wave;
       document.getElementById('death-kills').textContent = `${this.kills} (最大连杀 ${this.maxCombo})`;
@@ -3606,11 +3657,33 @@ const mouse = { x: 0, y: 0 };
 window.addEventListener('keydown', (e) => {
   keys[e.code] = true;
   // Prevent default for game keys
-  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) {
     e.preventDefault();
+  }
+  // Q key = cycle weapon (desktop)
+  if (e.code === 'KeyQ' && game && game.state === 'playing' && game.player && game.player.alive) {
+    const weaponIds = Object.keys(game.ownedWeapons).filter(function(id) {
+      return game.ownedWeapons[id] && game.ownedWeapons[id].owned;
+    });
+    if (weaponIds.length > 1) {
+      const currentIdx = weaponIds.indexOf(game.player.weaponType);
+      const nextIdx = (currentIdx + 1) % weaponIds.length;
+      game.equipWeapon(weaponIds[nextIdx]);
+      Sound.powerup();
+    }
   }
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+// Clear all keys on tab visibility change (prevents stuck keys on mobile app switch)
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden) {
+    Object.keys(keys).forEach(function(k) { keys[k] = false; });
+  }
+});
+window.addEventListener('pagehide', function() {
+  Object.keys(keys).forEach(function(k) { keys[k] = false; });
+});
 window.addEventListener('mousemove', (e) => {
   mouse.x = e.clientX;
   mouse.y = e.clientY;
@@ -3624,20 +3697,35 @@ window.addEventListener('mousedown', (e) => {
   if (e.target.tagName === 'CANVAS') e.preventDefault();
 });
 
+// --- Canvas (must be before mobile controls IIFE) ---
+const canvas = document.getElementById('game-canvas');
+
 // ============================================================
 // Mobile Touch Controls
 // ============================================================
 (function setupMobileControls() {
-  const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  // Align with CSS: show mobile controls on touch devices OR small screens
+  const isMobile = window.matchMedia('(hover: none) and (pointer: coarse)').matches
+    || window.matchMedia('(max-width: 768px)').matches;
   if (!isMobile) return;
 
   const joystickArea = document.getElementById('mobile-joystick-area');
   const joystickThumb = document.getElementById('mobile-joystick-thumb');
   const shootBtn = document.getElementById('mobile-shoot-btn');
+  const dashBtn = document.getElementById('mobile-dash-btn');
+  const weaponBtn = document.getElementById('mobile-weapon-btn');
   const pauseBtn = document.getElementById('mobile-pause-btn');
   let joystickActive = false;
   let joystickId = null;
   let shootTouchId = null;
+  let joystickDx = 0;   // current joystick direction (for dash)
+  let joystickDy = 0;
+
+  // Helper: check if a touch point falls inside any mobile control
+  function isTouchInMobileControl(touch) {
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    return el && el.closest('#mobile-controls');
+  }
 
   // Virtual joystick
   joystickArea.addEventListener('touchstart', function(e) {
@@ -3688,6 +3776,9 @@ window.addEventListener('mousedown', (e) => {
       dy = dy / dist * maxDist;
     }
     joystickThumb.style.transform = 'translate(calc(-50% + ' + dx + 'px), calc(-50% + ' + dy + 'px))';
+    // Store direction for dash
+    joystickDx = dx;
+    joystickDy = dy;
     // Convert to movement keys
     const threshold = 10;
     keys['KeyW'] = dy < -threshold;
@@ -3698,6 +3789,8 @@ window.addEventListener('mousedown', (e) => {
 
   function resetJoystick() {
     joystickThumb.style.transform = 'translate(-50%, -50%)';
+    joystickDx = 0;
+    joystickDy = 0;
     keys['KeyW'] = keys['KeyS'] = keys['KeyA'] = keys['KeyD'] = false;
   }
 
@@ -3715,6 +3808,8 @@ window.addEventListener('mousedown', (e) => {
   canvas.addEventListener('touchstart', function(e) {
     for (let i = 0; i < e.changedTouches.length; i++) {
       const t = e.changedTouches[i];
+      // Skip touches that landed on mobile control buttons
+      if (isTouchInMobileControl(t)) continue;
       if (isRightSide(t.clientX) && aimTouchId === null) {
         e.preventDefault();
         aimTouchId = t.identifier;
@@ -3788,6 +3883,60 @@ window.addEventListener('mousedown', (e) => {
     if (aimTouchId === null) stopAutoFire();
   });
 
+  // ============================================================
+  // Dash Button — trigger dash using joystick direction
+  // ============================================================
+  dashBtn.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    if (!game || game.state !== 'playing' || !game.player || !game.player.alive) return;
+    // Compute dash direction: use joystick direction if active, else default right
+    let mx = 0, my = 0;
+    if (joystickActive && (joystickDx !== 0 || joystickDy !== 0)) {
+      const mag = Math.sqrt(joystickDx * joystickDx + joystickDy * joystickDy);
+      mx = joystickDx / mag;
+      my = joystickDy / mag;
+    } else {
+      mx = 1; my = 0; // dash right by default
+    }
+    if (game.player.dashCooldown <= 0 && !game.player.dashing) {
+      game.player.dashing = true;
+      game.player.dashTimer = CFG.DASH_DURATION;
+      game.player.dashCooldown = CFG.DASH_COOLDOWN;
+      game.player.dashDx = mx * CFG.DASH_SPEED;
+      game.player.dashDy = my * CFG.DASH_SPEED;
+      Sound.dash();
+      dashBtn.classList.add('dash-cooldown');
+      dashBtn.classList.remove('dash-ready');
+      // Visual cooldown: poll until dash is ready again
+      const checkCooldown = setInterval(function() {
+        if (!game || !game.player || game.player.dashCooldown <= 0) {
+          clearInterval(checkCooldown);
+          dashBtn.classList.remove('dash-cooldown');
+          dashBtn.classList.add('dash-ready');
+        }
+      }, 100);
+    }
+  }, { passive: false });
+
+  // ============================================================
+  // Weapon Switch Button
+  // ============================================================
+  weaponBtn.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    if (!game || game.state !== 'playing' || !game.player || !game.player.alive) return;
+    const weaponIds = Object.keys(game.ownedWeapons).filter(function(id) {
+      return game.ownedWeapons[id] && game.ownedWeapons[id].owned;
+    });
+    if (weaponIds.length <= 1) return;
+    const currentIdx = weaponIds.indexOf(game.player.weaponType);
+    const nextIdx = (currentIdx + 1) % weaponIds.length;
+    game.equipWeapon(weaponIds[nextIdx]);
+    if (WEAPONS[weaponIds[nextIdx]]) {
+      weaponBtn.textContent = WEAPONS[weaponIds[nextIdx]].icon;
+    }
+    Sound.powerup();
+  }, { passive: false });
+
   function startAutoFire() {
     if (autoFireInterval) return;
     document.getElementById('mobile-auto-fire-indicator').classList.remove('hidden');
@@ -3821,11 +3970,22 @@ window.addEventListener('mousedown', (e) => {
     }
   }, { passive: false });
 
+  // ============================================================
+  // Clear touch state on visibility change (app switch, lock screen)
+  // ============================================================
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      joystickActive = false;
+      joystickId = null;
+      aimTouchId = null;
+      shootTouchId = null;
+      resetJoystick();
+      stopAutoFire();
+    }
+  });
+
   console.log('[Mobile] Touch controls initialized');
 })();
-
-// --- Canvas ---
-const canvas = document.getElementById('game-canvas');
 
 // --- Initialize ---
 game.init();
@@ -3833,16 +3993,17 @@ game.init();
 // ✅ Check for pending revives from Supabase (cross-device)
 (async function checkPendingRevives() {
   const myId = Storage.getPlayerId();
-  let foundRevives = 0;
 
-  // ✅ Check Supabase for pending revives
-  // ✅ Query Supabase for ALL pending revives (no limit, unlike checkRevives)
+  // ✅ Query Supabase for pending revives but DO NOT bulk-delete
+  // (bulk delete would consume revives that belong to active verification sessions)
   try {
     const data = await SupabaseDB.checkAllRevives(myId);
     if (data && data.length > 0) {
-      foundRevives = data.length;
-      await SupabaseDB.deleteRevives(myId);
-      console.log('[Revive] ✅ Found ' + foundRevives + ' pending revive(s) in Supabase');
+      // Store pending revives on game object for use in death screen flow
+      // Only auto-claim revives that are NOT part of an active verification session
+      // (active sessions are handled by verifyShareRevive)
+      game._pendingCrossDeviceRevives = data;
+      console.log('[Revive] Found ' + data.length + ' pending revive(s) in Supabase — stored for death screen');
     }
   } catch (err) {
     console.log('[Revive] Supabase not available for page-load check:', err.message);
@@ -3853,16 +4014,14 @@ game.init();
   if (localRevives.length > 0) {
     const myLocalRevives = localRevives.filter(r => r.to === myId);
     if (myLocalRevives.length > 0) {
-      foundRevives += myLocalRevives.length;
-      Storage.set('pendingRevives', localRevives.filter(r => r.to !== myId));
+      // Merge with Supabase results
+      if (!game._pendingCrossDeviceRevives) game._pendingCrossDeviceRevives = [];
+      myLocalRevives.forEach(function(r) {
+        game._pendingCrossDeviceRevives.push({ from_player: r.from, to_player: r.to, time: r.time, _local: true });
+      });
+      // Remove processed locals
+      Storage.set('pendingRevives', localRevives.filter(function(r) { return r.to !== myId; }));
     }
-  }
-
-  // Award revive tokens
-  if (foundRevives > 0 && game.reviveTokens <= 0) {
-    game.reviveTokens += foundRevives;
-    Storage.set('reviveTokens', game.reviveTokens);
-    console.log('[Revive] 🎫 Awarded ' + foundRevives + ' revive token(s)!');
   }
 })();
 
