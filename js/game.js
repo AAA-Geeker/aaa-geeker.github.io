@@ -622,6 +622,8 @@ class Particle {
 let particles = [];
 
 function spawnParticles(x, y, count, color, spread = 3, life = 0.4) {
+  // Mobile: cap particle count for performance
+  if (window.innerWidth < 768 && particles.length > 100) return;
   for (let i = 0; i < count; i++) {
     const a = rand(0, Math.PI * 2);
     const s = rand(0.5, spread);
@@ -1353,6 +1355,10 @@ const game = {
     this.activePauseTab = 'weapons';
     // Load persistent equipment
     this.autoFire = this.autoFireOwned;
+    // Init cross-device revive tracking for this run
+    this._knownReviveIds = new Set();
+    // Start background polling for new revives
+    this._startRevivePolling();
     // Equip the selected weapon (must be owned, fallback to pistol)
     if (this.ownedWeapons[this.equippedWeapon]?.owned) {
       this.player.weaponType = this.equippedWeapon;
@@ -1548,6 +1554,8 @@ const game = {
     // Mark this method as used
     this._usedReviveMethods[method] = true;
     this._reviveMethod = method || 'unknown';
+    // Clear active revive session ID (fresh start after revive)
+    this._reviveSessionId = null;
     // 📊 埋点：复活方式
     Analytics.trackRevive(this._reviveMethod);
     Sound.revive();
@@ -1558,6 +1566,9 @@ const game = {
 
   endRun() {
     this.state = 'menu';
+    // Clear revive session state
+    this._reviveSessionId = null;
+    this._stopRevivePolling();
     // Stars already in persistent balance (no conversion needed)
     this.totalKills += this.kills;
     if (this.score > this.highScore) this.highScore = this.score;
@@ -1600,9 +1611,33 @@ const game = {
 
     // Self-referral guard: check both device-local ID and cross-device auth key
     if (!refId) return;
-    if (refId === Storage.getPlayerId()) return; // same device
+    const myDeviceId = Storage.getPlayerId();
+
+    // Layer 1: same device
+    if (refId === myDeviceId) {
+      console.log('[Referral] Self-referral blocked (same device):', refId);
+      return;
+    }
+
+    // Layer 2: same user, different device (cross-device auth key)
     const crossDeviceKey = Auth.getCrossDeviceKey();
-    if (crossDeviceKey && refId === crossDeviceKey) return; // same user, different device
+    if (crossDeviceKey && refId === crossDeviceKey) {
+      console.log('[Referral] Self-referral blocked (cross-device key):', refId);
+      return;
+    }
+
+    // Layer 3: cross-session on same device (catches all player IDs ever used locally)
+    const allLocalIds = Storage.get('allLocalIds', []);
+    if (allLocalIds.includes(refId)) {
+      console.log('[Referral] Self-referral blocked (local history):', refId);
+      return;
+    }
+    // Track this refId locally to prevent future self-referrals
+    if (!allLocalIds.includes(myDeviceId)) {
+      allLocalIds.push(myDeviceId);
+    }
+    allLocalIds.push(refId);
+    Storage.set('allLocalIds', allLocalIds);
 
     sessionId = sessionId || 'legacy';
 
@@ -1773,6 +1808,31 @@ const game = {
       }
     });
     document.getElementById('btn-death-quit').addEventListener('click', () => this.endRun());
+
+    // Share score buttons
+    document.querySelectorAll('.btn-share-score').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const platform = btn.dataset.platform;
+        const shareText = '🔥 生存竞技场 Survival Arena 🔥\n' +
+          '🏆 得分: ' + this.score + '\n' +
+          '🌊 到达第 ' + this.wave + ' 波\n' +
+          '💀 击杀: ' + this.kills + ' 敌\n' +
+          '⭐ 获得星星: ' + this.starsEarned + '\n' +
+          '🔫 武器: ' + (WEAPONS[this.player.weaponType]?.name || '手枪') + '\n\n' +
+          '来挑战我吧！' + window.location.origin + window.location.pathname;
+        if (platform === 'wechat' || platform === 'copy') {
+          navigator.clipboard.writeText(shareText).then(() => {
+            if (platform === 'wechat') {
+              this.showToast('💬 已复制战绩！请打开微信粘贴发送给好友');
+            } else {
+              this.showToast('📋 战绩已复制！分享给好友来挑战吧');
+            }
+          }).catch(() => {
+            this.showToast('📋 请手动复制下方战绩分享给好友');
+          });
+        }
+      });
+    });
 
     // Friend modal - Two-step verification flow
     document.getElementById('btn-copy-link').addEventListener('click', () => {
@@ -2204,7 +2264,7 @@ const game = {
 
     // ✅ Real verification via Supabase with polling
     let checkCount = 0;
-    const maxChecks = 5;
+    const maxChecks = 8;
     const self = this;
 
     const doCheck = async function() {
@@ -2277,7 +2337,7 @@ const game = {
         // Retry with delay (real server polling)
         verifyStatusEl.querySelector('.verify-status-text').textContent =
           '正在核验中... (' + checkCount + '/' + maxChecks + ')';
-        self._verificationPollTimer = setTimeout(doCheck, 1200);
+        self._verificationPollTimer = setTimeout(doCheck, 1500);
       } else {
         // All checks failed
         btnVerify.disabled = false;
@@ -2352,6 +2412,65 @@ const game = {
     this._shareCompleted = false;
     this._shareMethod = null;
     this._verifyChecked = false;
+  },
+
+  // ✅ Runtime polling for cross-device revives during gameplay
+  _startRevivePolling() {
+    if (this._revivePollInterval) return; // already polling
+    const self = this;
+    const POLL_INTERVAL = 15000; // 15 seconds
+
+    this._revivePollInterval = setInterval(async function() {
+      // Only poll when player is in a game (playing or paused) or on menu
+      if (self.state !== 'playing' && self.state !== 'paused' && self.state !== 'menu') return;
+
+      const myId = Storage.getPlayerId();
+      try {
+        const data = await SupabaseDB.checkAllRevives(myId);
+        if (!data || data.length === 0) return;
+
+        // Track known revive IDs to avoid duplicate notifications
+        if (!self._knownReviveIds) self._knownReviveIds = new Set();
+        let newRevives = 0;
+        data.forEach(function(r) {
+          if (!self._knownReviveIds.has(r.id)) {
+            self._knownReviveIds.add(r.id);
+            newRevives++;
+          }
+        });
+
+        if (newRevives > 0) {
+          // Add to pending revives store
+          if (!self._pendingCrossDeviceRevives) self._pendingCrossDeviceRevives = [];
+          data.forEach(function(r) {
+            if (!self._pendingCrossDeviceRevives.some(function(existing) { return existing.id === r.id; })) {
+              self._pendingCrossDeviceRevives.push(r);
+            }
+          });
+
+          // Show notification based on game state
+          if (self.state === 'playing') {
+            self.showToast('🔔 好友已点击链接！阵亡后可复活', 4000, 'revive');
+          } else if (self.state === 'menu') {
+            self.showToast('🎉 检测到好友复活令牌！进入游戏阵亡后可复活', 4000, 'revive');
+          }
+          console.log('[Revive] Polling found ' + newRevives + ' new revive(s)');
+        }
+      } catch (err) {
+        // Silently retry on next interval
+        console.log('[Revive] Polling check failed (will retry):', err.message);
+      }
+    }, POLL_INTERVAL);
+
+    console.log('[Revive] Polling started — interval:', POLL_INTERVAL / 1000 + 's');
+  },
+
+  _stopRevivePolling() {
+    if (this._revivePollInterval) {
+      clearInterval(this._revivePollInterval);
+      this._revivePollInterval = null;
+      console.log('[Revive] Polling stopped');
+    }
   },
 
   // --- Pause Menu ---
@@ -3048,14 +3167,36 @@ const game = {
     this.showScreen('skins-screen');
   },
 
-  showToast(msg) {
+  showToast(msg, duration = 2000, type = 'default') {
+    // Toast queue: if currently visible, queue it
+    if (!this._toastQueue) this._toastQueue = [];
+    if (this._toastVisible) {
+      this._toastQueue.push({ msg, duration, type });
+      return;
+    }
+    this._showToastNow(msg, duration, type);
+  },
+
+  _showToastNow(msg, duration, type) {
+    const self = this;
+    this._toastVisible = true;
     const toast = document.getElementById('toast');
     toast.textContent = msg;
+    toast.className = 'toast' + (type !== 'default' ? ' toast-' + type : '');
     toast.classList.remove('hidden');
     toast.style.animation = 'none';
     toast.offsetHeight;
-    toast.style.animation = 'toastIn 0.3s ease, toastOut 0.3s ease 2s forwards';
-    setTimeout(() => toast.classList.add('hidden'), 2300);
+    const animDuration = Math.max(0.3, duration / 1000);
+    toast.style.animation = 'toastIn 0.3s ease, toastOut 0.3s ease ' + animDuration + 's forwards';
+    setTimeout(function() {
+      toast.classList.add('hidden');
+      self._toastVisible = false;
+      // Process next queued toast
+      if (self._toastQueue && self._toastQueue.length > 0) {
+        const next = self._toastQueue.shift();
+        setTimeout(function() { self._showToastNow(next.msg, next.duration, next.type); }, 100);
+      }
+    }, duration + 300);
   },
 
   updateMenuStats() {
@@ -3474,25 +3615,57 @@ const game = {
       spawnParticles(p.x, p.y, 25, '#ff5252', 8, 1);
 
       // ✅ Auto-consume pending cross-device revives from Supabase
+      // Session-aware: if player has an active verification session, only match that one
       if (this._pendingCrossDeviceRevives && this._pendingCrossDeviceRevives.length > 0) {
-        const pendingRevive = this._pendingCrossDeviceRevives.shift();
-        // Fire-and-forget delete from Supabase (don't block game loop)
-        if (pendingRevive.id) {
-          SupabaseDB.deleteReviveById(pendingRevive.id).catch(function(e) {
-            console.warn('[Revive] Failed to delete consumed revive:', e.message);
-          });
+        let pendingRevive = null;
+        const self = this;
+
+        // If there's an active revive session, try to match it first
+        if (this._reviveSessionId) {
+          pendingRevive = this._pendingCrossDeviceRevives.find(function(r) {
+            return r.from_player && r.from_player.endsWith('::' + self._reviveSessionId);
+          }) || null;
         }
-        // Auto-revive with friend method
-        this._usedReviveMethods = this._usedReviveMethods || {};
-        if (!this._usedReviveMethods['friend']) {
-          this._usedReviveMethods['friend'] = true;
-          this.coins += 50;
-          this.gems += 5;
-          Storage.set('coins', this.coins);
-          Storage.set('gems', this.gems);
-          this.showToast('🎉 好友已为你复活！（跨设备）');
-          this.revive('friend');
-          return; // Skip death screen
+
+        // Fallback: use the first non-session-specific revive (older, likely from other friends)
+        if (!pendingRevive) {
+          pendingRevive = this._pendingCrossDeviceRevives.find(function(r) {
+            // Skip revives that belong to a different active session
+            return !self._reviveSessionId || !(r.from_player && r.from_player.endsWith('::' + self._reviveSessionId));
+          }) || null;
+          // If no session is active, just take the first one
+          if (!pendingRevive && !this._reviveSessionId) {
+            pendingRevive = this._pendingCrossDeviceRevives.shift();
+          } else if (pendingRevive) {
+            // Remove from array
+            const idx = this._pendingCrossDeviceRevives.indexOf(pendingRevive);
+            if (idx >= 0) this._pendingCrossDeviceRevives.splice(idx, 1);
+          }
+        } else {
+          // Remove the matched session revive from array
+          const idx = this._pendingCrossDeviceRevives.indexOf(pendingRevive);
+          if (idx >= 0) this._pendingCrossDeviceRevives.splice(idx, 1);
+        }
+
+        if (pendingRevive) {
+          // Fire-and-forget delete from Supabase (don't block game loop)
+          if (pendingRevive.id) {
+            SupabaseDB.deleteReviveById(pendingRevive.id).catch(function(e) {
+              console.warn('[Revive] Failed to delete consumed revive:', e.message);
+            });
+          }
+          // Auto-revive with friend method
+          this._usedReviveMethods = this._usedReviveMethods || {};
+          if (!this._usedReviveMethods['friend']) {
+            this._usedReviveMethods['friend'] = true;
+            this.coins += 50;
+            this.gems += 5;
+            Storage.set('coins', this.coins);
+            Storage.set('gems', this.gems);
+            this.showToast('🎉 好友已为你复活！（跨设备）');
+            this.revive('friend');
+            return; // Skip death screen
+          }
         }
       }
 
@@ -3546,7 +3719,7 @@ const game = {
   },
 
   render() {
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false }); // optimize: no alpha blending needed for opaque game
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Apply screen shake
@@ -3603,10 +3776,11 @@ const game = {
     ctx.fillStyle = '#0d0d1a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Grid lines
+    // Mobile optimization: larger grid, skip gradient
+    const isNarrow = canvas.width < 768;
+    const gridSize = isNarrow ? 70 : 50;
     ctx.strokeStyle = 'rgba(255,255,255,0.03)';
     ctx.lineWidth = 1;
-    const gridSize = 50;
     for (let x = 0; x < canvas.width; x += gridSize) {
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -3620,15 +3794,17 @@ const game = {
       ctx.stroke();
     }
 
-    // Border glow
-    const gradient = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.width*0.3, canvas.width/2, canvas.height/2, canvas.width*0.7);
-    gradient.addColorStop(0, 'transparent');
-    gradient.addColorStop(1, 'rgba(233,69,96,0.05)');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Border glow — skip radial gradient on mobile (expensive)
+    if (!isNarrow) {
+      const gradient = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.width*0.3, canvas.width/2, canvas.height/2, canvas.width*0.7);
+      gradient.addColorStop(0, 'transparent');
+      gradient.addColorStop(1, 'rgba(233,69,96,0.05)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
 
-    // Draw player crosshair if in game
-    if (this.state === 'playing' || this.state === 'paused') {
+    // Draw player crosshair if in game — skip on mobile (invisible under finger)
+    if ((this.state === 'playing' || this.state === 'paused') && !isNarrow) {
       ctx.strokeStyle = 'rgba(255,255,255,0.3)';
       ctx.lineWidth = 1.5;
       const s = 15;
@@ -3721,6 +3897,10 @@ const canvas = document.getElementById('game-canvas');
   let joystickDx = 0;   // current joystick direction (for dash)
   let joystickDy = 0;
 
+  // Swipe gesture tracking for dash
+  let swipeStartX = 0, swipeStartY = 0, swipeStartTime = 0;
+  let swipeTouchId = null;
+
   // Helper: check if a touch point falls inside any mobile control
   function isTouchInMobileControl(touch) {
     const el = document.elementFromPoint(touch.clientX, touch.clientY);
@@ -3810,6 +3990,15 @@ const canvas = document.getElementById('game-canvas');
       const t = e.changedTouches[i];
       // Skip touches that landed on mobile control buttons
       if (isTouchInMobileControl(t)) continue;
+
+      // Track potential swipe start (for dash gesture)
+      if (swipeTouchId === null) {
+        swipeStartX = t.clientX;
+        swipeStartY = t.clientY;
+        swipeStartTime = Date.now();
+        swipeTouchId = t.identifier;
+      }
+
       if (isRightSide(t.clientX) && aimTouchId === null) {
         e.preventDefault();
         aimTouchId = t.identifier;
@@ -3835,16 +4024,44 @@ const canvas = document.getElementById('game-canvas');
 
   canvas.addEventListener('touchend', function(e) {
     for (let i = 0; i < e.changedTouches.length; i++) {
-      if (e.changedTouches[i].identifier === aimTouchId) {
+      const t = e.changedTouches[i];
+
+      // Check for swipe-dash gesture
+      if (t.identifier === swipeTouchId) {
+        const dx = t.clientX - swipeStartX;
+        const dy = t.clientY - swipeStartY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const elapsed = Date.now() - swipeStartTime;
+        // Fast swipe (>50px in <300ms) triggers dash
+        if (dist > 50 && elapsed < 300 && game && game.state === 'playing' && game.player && game.player.alive) {
+          if (game.player.dashCooldown <= 0 && !game.player.dashing) {
+            const mx = dx / dist;
+            const my = dy / dist;
+            game.player.dashing = true;
+            game.player.dashTimer = CFG.DASH_DURATION;
+            game.player.dashCooldown = CFG.DASH_COOLDOWN;
+            game.player.dashDx = mx * CFG.DASH_SPEED;
+            game.player.dashDy = my * CFG.DASH_SPEED;
+            Sound.dash();
+            // Visual feedback
+            game.showToast('💨 闪避！', 600);
+          }
+        }
+        swipeTouchId = null;
+      }
+
+      if (t.identifier === aimTouchId) {
         aimTouchId = null;
         stopAutoFire();
-        return;
       }
     }
   });
 
   canvas.addEventListener('touchcancel', function(e) {
     for (let i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i].identifier === swipeTouchId) {
+        swipeTouchId = null;
+      }
       if (e.changedTouches[i].identifier === aimTouchId) {
         aimTouchId = null;
         stopAutoFire();
@@ -3979,10 +4196,46 @@ const canvas = document.getElementById('game-canvas');
       joystickId = null;
       aimTouchId = null;
       shootTouchId = null;
+      swipeTouchId = null;
       resetJoystick();
       stopAutoFire();
     }
   });
+
+  // ============================================================
+  // Orientation hint for mobile portrait mode
+  // ============================================================
+  function updateOrientationHint() {
+    const hint = document.getElementById('orientation-hint');
+    if (!hint) return;
+    const isGameVisible = !document.getElementById('game-screen').classList.contains('hidden');
+    const isPortrait = window.innerHeight > window.innerWidth;
+    const isNarrowScreen = window.innerWidth < 768;
+
+    if (isNarrowScreen && isGameVisible && isPortrait) {
+      hint.classList.remove('hidden');
+    } else {
+      hint.classList.add('hidden');
+    }
+  }
+  window.addEventListener('resize', updateOrientationHint);
+  window.addEventListener('orientationchange', function() {
+    setTimeout(updateOrientationHint, 300); // delay for orientation to settle
+  });
+  // Also check when game screen becomes visible (game.startGame)
+  var origStartGame = game.startGame;
+  game.startGame = function() {
+    origStartGame.call(this);
+    setTimeout(updateOrientationHint, 100);
+  };
+
+  // Attempt screen orientation lock (best-effort)
+  if (screen.orientation && screen.orientation.lock) {
+    screen.orientation.lock('landscape').catch(function() {
+      // Lock not supported, rely on the hint overlay instead
+      console.log('[Mobile] Screen orientation lock not supported');
+    });
+  }
 
   console.log('[Mobile] Touch controls initialized');
 })();
@@ -4000,10 +4253,13 @@ game.init();
     const data = await SupabaseDB.checkAllRevives(myId);
     if (data && data.length > 0) {
       // Store pending revives on game object for use in death screen flow
-      // Only auto-claim revives that are NOT part of an active verification session
-      // (active sessions are handled by verifyShareRevive)
+      // Mark each with its session ID for session-aware auto-claim
       game._pendingCrossDeviceRevives = data;
       console.log('[Revive] Found ' + data.length + ' pending revive(s) in Supabase — stored for death screen');
+      // Notify immediately if player is already in game
+      if (game.state === 'playing' || game.state === 'paused') {
+        game.showToast('🔔 检测到好友复活令牌！阵亡后可复活');
+      }
     }
   } catch (err) {
     console.log('[Revive] Supabase not available for page-load check:', err.message);
@@ -4023,6 +4279,9 @@ game.init();
       Storage.set('pendingRevives', localRevives.filter(function(r) { return r.to !== myId; }));
     }
   }
+
+  // ✅ Start runtime polling for new cross-device revives during gameplay
+  game._startRevivePolling();
 })();
 
 console.log('%c🎮 生存竞技场已就绪 %c| %cPlayer ID: ' + Storage.getPlayerId(),

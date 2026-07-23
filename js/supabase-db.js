@@ -21,6 +21,12 @@ const SupabaseDB = {
 
   // ---- 写入复活令牌 ----
   async addRevive(fromPlayerId, toPlayerId) {
+    // Block self-referral at database level
+    if (fromPlayerId === toPlayerId) {
+      console.warn('[DB] Self-referral blocked at DB level:', fromPlayerId);
+      return [];
+    }
+
     // Dedup: check for existing unclaimed record before inserting
     const checkUrl = this._base
       + '?from_player=eq.' + encodeURIComponent(fromPlayerId)

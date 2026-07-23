@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
 <title>Survival Arena - 生存竞技场</title>
 <meta name="monetag" content="3b5240002fe367718eb0b2c66bd4061f">
-<link rel="stylesheet" href="css/style.css?v=10">
+<link rel="stylesheet" href="css/style.css?v=11">
 	<!-- ============================================================
 	     Monetag Ad Integration
 	     CONFIGURATION: Edit js/ads-monetag.js → AD_CONFIG object
@@ -22,13 +22,13 @@
 	</script>
 
 	<!-- Supabase 实时数据库（好友复活验证）— 直接通过REST API -->
-	<script src="js/supabase-db.js?v=10"></script>
+	<script src="js/supabase-db.js?v=11"></script>
 
 	<!-- 游戏分析统计 -->
-	<script src="js/analytics.js?v=10"></script>
+	<script src="js/analytics.js?v=11"></script>
 
 	<!-- Monetag → AdManager adapter（必须在 game.js 之前加载） -->
-	<script src="js/ads-monetag.js?v=10"></script>
+	<script src="js/ads-monetag.js?v=11"></script>
 </head>
 <body>
 
@@ -108,6 +108,14 @@
   <!-- Game Screen -->
   <div id="game-screen" class="screen hidden">
     <canvas id="game-canvas"></canvas>
+    <!-- 横屏游戏提示（仅手机竖屏时显示） -->
+    <div id="orientation-hint" class="hidden">
+      <div class="orientation-content">
+        <span class="orientation-icon">📱</span>
+        <p>请旋转设备至横屏模式</p>
+        <p class="orientation-sub">以获得最佳游戏体验</p>
+      </div>
+    </div>
     <!-- 手机触控按钮 -->
     <div id="mobile-controls">
       <div id="mobile-joystick-area">
@@ -201,6 +209,13 @@
         </button>
       </div>
       <button class="btn btn-death-quit" id="btn-death-quit">🏳️ 放弃</button>
+      <div class="share-score-section" id="share-score-section">
+        <p class="share-score-title">🏆 分享你的战绩</p>
+        <div class="share-score-buttons">
+          <button class="btn btn-share-score" data-platform="wechat">💬 分享到微信</button>
+          <button class="btn btn-share-score" data-platform="copy">📋 复制战绩</button>
+        </div>
+      </div>
       <p class="small-hint" id="death-hint"></p>
       <p class="death-progress hidden" id="death-progress"></p>
     </div>
@@ -400,6 +415,6 @@
 
 </div>
 
-<script src="js/game.js?v=10"></script>
+<script src="js/game.js?v=11"></script>
 </body>
 </html>
