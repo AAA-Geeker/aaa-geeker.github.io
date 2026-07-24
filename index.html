@@ -221,6 +221,23 @@
     </div>
   </div>
 
+  <!-- Continue Game Screen -->
+  <div id="continue-screen" class="screen overlay hidden">
+    <div class="overlay-content continue-content">
+      <h2>📂 检测到未完成的游戏</h2>
+      <p class="continue-info">你有一局进行中的游戏，要怎么做？</p>
+      <div class="continue-stats">
+        <p>🌊 当前进度: 第 <strong id="continue-wave">1</strong> 波</p>
+        <p>🏆 得分: <strong id="continue-score">0</strong></p>
+        <p>💀 击杀: <strong id="continue-kills">0</strong></p>
+        <p>❤️ 剩余生命: <strong id="continue-hp">100</strong></p>
+        <p>🔫 武器: <strong id="continue-weapon">手枪</strong></p>
+      </div>
+      <button class="btn btn-continue-game" id="btn-continue-game">▶️ 继续游戏</button>
+      <button class="btn btn-restart-game" id="btn-restart-game">🔄 重新开始</button>
+    </div>
+  </div>
+
   <!-- Shop Screen -->
   <div id="shop-screen" class="screen overlay hidden">
     <div class="overlay-content shop-content">

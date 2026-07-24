@@ -187,6 +187,55 @@ body {
   margin-top: 8px;
 }
 
+/* Continue Game Screen */
+.continue-content {
+  max-width: 420px;
+  text-align: center;
+}
+.continue-content h2 {
+  font-size: 1.4rem;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.continue-info {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  margin-bottom: 16px;
+}
+.continue-stats {
+  background: rgba(255,255,255,0.05);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 20px;
+  text-align: left;
+  line-height: 2;
+}
+.continue-stats strong {
+  color: var(--gold);
+}
+.btn-continue-game {
+  background: linear-gradient(135deg, #16c79a, #0ea87a);
+  font-size: 1.1rem;
+  padding: 14px 28px;
+  margin-bottom: 8px;
+  width: 100%;
+}
+.btn-continue-game:hover {
+  background: linear-gradient(135deg, #1dd4a8, #12b886);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(22,199,154,0.4);
+}
+.btn-restart-game {
+  background: rgba(255,255,255,0.08);
+  font-size: 0.9rem;
+  padding: 10px 20px;
+  width: 100%;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.btn-restart-game:hover {
+  background: rgba(255,255,255,0.14);
+}
+
 /* Overlay Content */
 .overlay-content {
   background: var(--surface);

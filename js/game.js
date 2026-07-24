@@ -1285,6 +1285,14 @@ const game = {
     this.setupUI();
     this.initLoginScreen();
 
+    // Auto-save on tab close / app switch
+    window.addEventListener('beforeunload', () => this.saveGameState());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && this.state === 'playing') {
+        this.saveGameState();
+      }
+    });
+
     // Check session: logged in → main menu, otherwise → login screen
     const currentUser = Auth.getCurrentUser();
     if (currentUser) {
@@ -1294,6 +1302,8 @@ const game = {
       this.showScreen('main-menu');
       // ✅ 老用户自动登录后检查好友推荐
       this.checkReferral();
+      // ✅ Check for saved game and show continue dialog
+      this.checkContinueGame();
     } else {
       this.showScreen('login-screen');
     }
@@ -1331,6 +1341,8 @@ const game = {
   },
 
   startGame() {
+    // Clear any saved game from previous session
+    this.clearSavedGame();
     this.player.reset();
     this.applyUpgrades();
     this.player.x = canvas.width / 2;
@@ -1569,6 +1581,8 @@ const game = {
     // Clear revive session state
     this._reviveSessionId = null;
     this._stopRevivePolling();
+    // Clear saved game (player chose to end the run)
+    this.clearSavedGame();
     // Stars already in persistent balance (no conversion needed)
     this.totalKills += this.kills;
     if (this.score > this.highScore) this.highScore = this.score;
@@ -1741,6 +1755,16 @@ const game = {
     document.getElementById('btn-skins').addEventListener('click', () => this.showSkins());
     document.getElementById('btn-leaderboard').addEventListener('click', () => this.showLeaderboard());
 
+    // Continue game screen buttons
+    document.getElementById('btn-continue-game').addEventListener('click', () => {
+      this.restoreGameState();
+    });
+    document.getElementById('btn-restart-game').addEventListener('click', () => {
+      this.clearSavedGame();
+      this.showScreen('main-menu');
+      this.startGame();
+    });
+
     // Click star/gem displays to open shop
     document.getElementById('menu-coins').style.cursor = 'pointer';
     document.getElementById('menu-coins').addEventListener('click', () => this.showShop());
@@ -1775,6 +1799,9 @@ const game = {
       tab.addEventListener('click', () => this.switchPauseTab(tab.dataset.pauseTab));
     });
     document.getElementById('btn-quit').addEventListener('click', () => {
+      // Save game state before quitting so user can continue later
+      this.saveGameState();
+      this._stopRevivePolling();
       this.state = 'menu';
       // Stars already in persistent balance
       this.totalKills += this.kills;
@@ -1931,6 +1958,23 @@ const game = {
     this.updateMenuStats();
   },
 
+  // --- Check for saved game and show continue dialog ---
+  checkContinueGame() {
+    if (!this.hasSavedGame()) return;
+    var summary = this.getSavedGameSummary();
+    if (!summary) return;
+
+    // Populate continue-screen with saved game info
+    document.getElementById('continue-wave').textContent = summary.wave;
+    document.getElementById('continue-score').textContent = summary.score;
+    document.getElementById('continue-kills').textContent = summary.kills;
+    document.getElementById('continue-hp').textContent = summary.hp + ' / ' + summary.maxHp;
+    var weapon = WEAPONS[summary.weaponType];
+    document.getElementById('continue-weapon').textContent = (weapon ? weapon.icon + ' ' + weapon.name : '手枪');
+
+    this.showScreen('continue-screen');
+  },
+
   // --- Login System UI ---
   initLoginScreen() {
     const self = this;
@@ -2074,6 +2118,8 @@ const game = {
     Analytics.trackLogin(loginMethod);
     // ✅ 登录后检查好友推荐（核验好友复活）
     this.checkReferral();
+    // ✅ 检查是否有未完成的游戏存档
+    this.checkContinueGame();
   },
 
   showScreen(id) {
@@ -2096,6 +2142,270 @@ const game = {
     this.state = 'playing';
     this.showScreen('game-screen');
     this.lastTime = performance.now();
+  },
+
+  // ============================================================
+  // SAVE / LOAD GAME STATE — Continue or Restart
+  // ============================================================
+  saveGameState() {
+    if (this.state !== 'playing' && this.state !== 'paused') return;
+    try {
+      const state = {
+        version: 1,
+        timestamp: Date.now(),
+
+        // Player state
+        player: {
+          x: this.player.x, y: this.player.y,
+          radius: this.player.radius,
+          speed: this.player.speed,
+          maxHp: this.player.maxHp,
+          hp: this.player.hp,
+          baseDamage: this.player.baseDamage,
+          fireRate: this.player.fireRate,
+          lastShot: this.player.lastShot,
+          alive: this.player.alive,
+          weaponType: this.player.weaponType,
+          speedBoost: this.player.speedBoost,
+          damageBoost: this.player.damageBoost,
+          shieldActive: this.player.shieldActive,
+          magnetActive: this.player.magnetActive,
+          dashing: this.player.dashing,
+          dashDx: this.player.dashDx,
+          dashDy: this.player.dashDy,
+          dashTimer: this.player.dashTimer,
+          dashCooldown: this.player.dashCooldown,
+          iframeTimer: this.player.iframeTimer,
+          facingAngle: this.player.facingAngle,
+        },
+
+        // Game state
+        wave: this.wave,
+        score: this.score,
+        starsEarned: this.starsEarned,
+        kills: this.kills,
+        comboCount: this.comboCount,
+        comboTimer: this.comboTimer,
+        maxCombo: this.maxCombo,
+        waveTransition: this.waveTransition,
+        waveTimer: this.waveTimer,
+        waveCountdown: this.waveCountdown,
+        waveCountdownAction: this.waveCountdownAction,
+        enemiesRemaining: this.enemiesRemaining,
+        totalEnemiesThisWave: this.totalEnemiesThisWave,
+        autoFire: this.autoFire,
+        _usedReviveMethods: this._usedReviveMethods || {},
+        adWatched: this.adWatched,
+        _reviveMethod: this._reviveMethod || null,
+        _gameStartTime: this._gameStartTime || null,
+
+        // Entities
+        enemies: enemies.map(function(e) {
+          return {
+            typeKey: e.typeKey, x: e.x, y: e.y,
+            radius: e.radius, hp: e.hp, maxHp: e.maxHp,
+            speed: e.speed, damage: e.damage,
+            color: e.color, color2: e.color2,
+            score: e.score, shape: e.shape,
+            hitFlash: e.hitFlash, lastShot: e.lastShot,
+            shoots: e.shoots, fireRate: e.fireRate, bulletSpeed: e.bulletSpeed,
+          };
+        }),
+
+        projectiles: projectiles.map(function(p) {
+          return {
+            x: p.x, y: p.y, vx: p.vx, vy: p.vy,
+            damage: p.damage, color: p.color,
+            isEnemy: p.isEnemy, radius: p.radius,
+          };
+        }),
+
+        powerups: powerups.map(function(pu) {
+          return {
+            x: pu.x, y: pu.y,
+            typeId: pu.type ? pu.type.id : 'health',
+            radius: pu.radius, life: pu.life,
+            elapsed: pu.elapsed, bobOffset: pu.bobOffset,
+          };
+        }),
+
+        starsArr: starsArr.map(function(s) {
+          return {
+            x: s.x, y: s.y, value: s.value,
+            radius: s.radius, life: s.life,
+            elapsed: s.elapsed, rotation: s.rotation, bobOffset: s.bobOffset,
+          };
+        }),
+      };
+      Storage.set('gameState', state);
+      console.log('[Save] Game state saved (wave ' + this.wave + ', score ' + this.score + ')');
+    } catch (e) {
+      console.error('[Save] Failed to save game state:', e);
+    }
+  },
+
+  hasSavedGame() {
+    var state = Storage.get('gameState', null);
+    if (!state || !state.version) return false;
+    // Expire saves older than 24 hours
+    if (Date.now() - state.timestamp > 24 * 60 * 60 * 1000) {
+      this.clearSavedGame();
+      return false;
+    }
+    return state.player && state.player.alive;
+  },
+
+  getSavedGameSummary() {
+    var state = Storage.get('gameState', null);
+    if (!state) return null;
+    return {
+      wave: state.wave || 1,
+      score: state.score || 0,
+      kills: state.kills || 0,
+      hp: state.player ? Math.ceil(state.player.hp) : 0,
+      maxHp: state.player ? state.player.maxHp : 100,
+      weaponType: state.player ? state.player.weaponType : 'pistol',
+    };
+  },
+
+  clearSavedGame() {
+    Storage.set('gameState', null);
+  },
+
+  restoreGameState() {
+    var state = Storage.get('gameState', null);
+    if (!state) {
+      this.showToast('⚠️ 没有可恢复的存档');
+      return false;
+    }
+
+    try {
+      var sp = state.player;
+
+      // Restore player
+      this.player.x = sp.x;
+      this.player.y = sp.y;
+      this.player.radius = sp.radius;
+      this.player.speed = sp.speed || CFG.PLAYER_SPEED;
+      this.player.maxHp = sp.maxHp;
+      this.player.hp = sp.hp;
+      this.player.baseDamage = sp.baseDamage;
+      this.player.fireRate = sp.fireRate;
+      this.player.lastShot = 0; // Reset timing for new session (performance.now() changes on reload)
+      this.player.alive = sp.alive;
+      this.player.weaponType = sp.weaponType;
+      this.player.speedBoost = Math.max(0, sp.speedBoost || 0);
+      this.player.damageBoost = Math.max(0, sp.damageBoost || 0);
+      this.player.shieldActive = Math.max(0, sp.shieldActive || 0);
+      this.player.magnetActive = Math.max(0, sp.magnetActive || 0);
+      this.player.dashing = sp.dashing || false;
+      this.player.dashDx = sp.dashDx || 0;
+      this.player.dashDy = sp.dashDy || 0;
+      this.player.dashTimer = sp.dashTimer || 0;
+      this.player.dashCooldown = Math.max(0, sp.dashCooldown || 0);
+      this.player.iframeTimer = Math.max(0, sp.iframeTimer || 0);
+      this.player.facingAngle = sp.facingAngle || 0;
+
+      // Restore game state
+      this.wave = state.wave;
+      this.score = state.score;
+      this.starsEarned = state.starsEarned;
+      this.kills = state.kills;
+      this.comboCount = state.comboCount;
+      this.comboTimer = state.comboTimer;
+      this.maxCombo = state.maxCombo;
+      this.waveTransition = state.waveTransition;
+      this.waveTimer = state.waveTimer;
+      this.waveCountdown = state.waveCountdown;
+      this.waveCountdownAction = state.waveCountdownAction;
+      this.enemiesRemaining = state.enemiesRemaining;
+      this.totalEnemiesThisWave = state.totalEnemiesThisWave;
+      this.autoFire = state.autoFire;
+      this._usedReviveMethods = state._usedReviveMethods || {};
+      this.adWatched = state.adWatched || false;
+      this._reviveMethod = state._reviveMethod || null;
+      this._gameStartTime = state._gameStartTime || null;
+
+      // Restore enemies
+      enemies = [];
+      var self = this;
+      if (state.enemies && state.enemies.length > 0) {
+        state.enemies.forEach(function(ed) {
+          var e = new Enemy(ed.typeKey, ed.x, ed.y, self.wave);
+          e.x = ed.x; e.y = ed.y;
+          e.radius = ed.radius;
+          e.hp = ed.hp; e.maxHp = ed.maxHp;
+          e.speed = ed.speed; e.damage = ed.damage;
+          e.color = ed.color; e.color2 = ed.color2;
+          e.score = ed.score; e.shape = ed.shape;
+          e.hitFlash = ed.hitFlash || 0;
+          e.lastShot = ed.lastShot;
+          e.shoots = ed.shoots;
+          e.fireRate = ed.fireRate;
+          e.bulletSpeed = ed.bulletSpeed;
+          enemies.push(e);
+        });
+      }
+
+      // Restore projectiles
+      projectiles = [];
+      if (state.projectiles && state.projectiles.length > 0) {
+        state.projectiles.forEach(function(pd) {
+          projectiles.push(new Projectile(
+            pd.x, pd.y, pd.vx, pd.vy,
+            pd.damage, pd.color, pd.isEnemy, pd.radius
+          ));
+        });
+      }
+
+      // Restore powerups
+      powerups = [];
+      if (state.powerups && state.powerups.length > 0) {
+        state.powerups.forEach(function(pd) {
+          var pType = POWERUP_TYPES.find(function(t) { return t.id === pd.typeId; }) || POWERUP_TYPES[0];
+          var pu = new PowerUp(pd.x, pd.y, pType);
+          pu.radius = pd.radius;
+          pu.life = pd.life;
+          pu.elapsed = pd.elapsed;
+          pu.bobOffset = pd.bobOffset;
+          powerups.push(pu);
+        });
+      }
+
+      // Restore stars
+      starsArr = [];
+      if (state.starsArr && state.starsArr.length > 0) {
+        state.starsArr.forEach(function(sd) {
+          var s = new Star(sd.x, sd.y, sd.value);
+          s.radius = sd.radius;
+          s.life = sd.life;
+          s.elapsed = sd.elapsed;
+          s.rotation = sd.rotation;
+          s.bobOffset = sd.bobOffset;
+          starsArr.push(s);
+        });
+      }
+
+      // Clear particles (cosmetic, don't restore)
+      particles = [];
+
+      // Re-init cross-device revive tracking
+      this._knownReviveIds = new Set();
+      this._startRevivePolling();
+
+      this.state = 'playing';
+      this.showScreen('game-screen');
+      this.lastTime = performance.now();
+      this.updateHUD();
+
+      console.log('[Load] Game state restored (wave ' + state.wave + ', score ' + state.score + ')');
+      return true;
+    } catch (e) {
+      console.error('[Load] Failed to restore game state:', e);
+      this.clearSavedGame();
+      this.showToast('⚠️ 存档恢复失败，请重新开始');
+      return false;
+    }
   },
 
   // --- Ad System (supports simulated / WeChat / Web SDK) ---
